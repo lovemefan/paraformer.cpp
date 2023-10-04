@@ -2,50 +2,47 @@
 // Created by lovemefan on 2023/10/1.
 //
 
-#include <vector>
-#include "hparams.h"
-
 #ifndef PARAFORMER_CPP_ENCODER_H
 #define PARAFORMER_CPP_ENCODER_H
 
-
+#include <vector>
+#include "hparams.h"
 
 // audio encoding layer
 struct paraformer_layer_encoder {
-    // encoder.blocks.*.attn_ln
-    struct ggml_tensor * attn_ln_0_w;
-    struct ggml_tensor * attn_ln_0_b;
+    // encoder_attn.linear_out.weight
+    struct ggml_tensor * attn_ln_out_w;
+    struct ggml_tensor * attn_ln_out_b;
 
-    // encoder.blocks.*.attn.out
-    struct ggml_tensor * attn_ln_1_w;
-    struct ggml_tensor * attn_ln_1_b;
+    // encoder.self_attn.linear_q_k_v.weight
+    struct ggml_tensor * attn_ln_qkv_w;
+    struct ggml_tensor * attn_ln_qkv_b;
 
-    // encoder.blocks.*.attn.query
-    struct ggml_tensor * attn_q_w;
-    struct ggml_tensor * attn_q_b;
+    // encoder.self_attn.fsmn_block.weight
+    struct ggml_tensor * attn_fsmn_w;
 
-    // encoder.blocks.*.attn.key
-    struct ggml_tensor * attn_k_w;
 
-    // encoder.blocks.*.attn.value
-    struct ggml_tensor * attn_v_w;
-    struct ggml_tensor * attn_v_b;
+    // encoder.feed_forward.w_1.weight
+    struct ggml_tensor * mlp_w1;
+    struct ggml_tensor * mlp_b1;
 
-    // encoder.blocks.*.mlp_ln
-    struct ggml_tensor * mlp_ln_w;
-    struct ggml_tensor * mlp_ln_b;
+    // encoder.feed_forward.w_2.weight
+    struct ggml_tensor * mlp_w2;
+    struct ggml_tensor * mlp_b2;
 
-    // encoder.blocks.*.mlp.0
-    struct ggml_tensor * mlp_0_w;
-    struct ggml_tensor * mlp_0_b;
+    // encoder.norm1.weight
+    struct ggml_tensor * norm_w1;
+    struct ggml_tensor * norm_b1;
 
-    // encoder.blocks.*.mlp.2
-    struct ggml_tensor * mlp_1_w;
-    struct ggml_tensor * mlp_1_b;
+    // encoder.norm2.weight
+    struct ggml_tensor * norm_w2;
+    struct ggml_tensor * norm_b2;
+
 };
 
-struct paraformer_encoder {
 
+struct paraformer_encoder {
+    std::vector<paraformer_layer_encoder> encoder_layer;
 };
 
 void build_encoder(paraformer_encoder &model);
