@@ -7,10 +7,7 @@
 #ifndef PARAFORMER_CPP_DECODER_H
 #define PARAFORMER_CPP_DECODER_H
 
-
-
-
-
+#include "hparams.h"
 // token decoding layer
 struct paraformer_layer_decoder {
     // decoder.blocks.*.attn_ln
@@ -64,20 +61,8 @@ struct paraformer_layer_decoder {
     struct ggml_tensor * mlp_1_b;
 };
 
-struct paraformer_kv_cache {
-    struct ggml_tensor * k;
-    struct ggml_tensor * v;
-
-    struct ggml_context * ctx;
-
-    // buf points to the memory allocated for both ggml_tensor 'k' and 'v' (see kv_cache_init)
-    std::vector<uint8_t> buf;
-
-    int n; // number of tokens currently in the cache
-};
 
 typedef int16_t paraformer_token;
-
 typedef struct paraformer_token_data {
     paraformer_token id;  // token id
     paraformer_token tid; // forced timestamp token id
@@ -129,5 +114,20 @@ struct paraformer_decoder {
 
     std::vector<paraformer_token> tokens_tmp; // used for paraformer_decode calls
 };
+
+
+typedef int16_t paraformer_token;
+
+static struct ggml_cgraph * paraformer_build_graph_cross(
+        paraformer_context & wctx,
+        paraformer_state & wstate);
+
+static struct ggml_cgraph * paraformer_build_graph_decoder(
+        paraformer_context & wctx,
+        paraformer_state   & wstate,
+        paraformer_decoder & decoder,
+        const paraformer_token * tokens,
+        int   n_tokens,
+        int   n_past);
 
 #endif //PARAFORMER_CPP_DECODER_H

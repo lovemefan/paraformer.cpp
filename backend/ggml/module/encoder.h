@@ -3,6 +3,7 @@
 //
 
 #include <vector>
+#include "hparams.h"
 
 #ifndef PARAFORMER_CPP_ENCODER_H
 #define PARAFORMER_CPP_ENCODER_H
@@ -46,5 +47,10 @@ struct paraformer_layer_encoder {
 struct paraformer_encoder {
 
 };
+
+void build_encoder(paraformer_encoder &model);
+static struct ggml_cgraph * paraformer_build_graph_encoder(
+        paraformer_context & wctx,
+        paraformer_state & wstate);
 
 #endif //PARAFORMER_CPP_ENCODER_H

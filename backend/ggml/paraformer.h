@@ -10,7 +10,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-
+#include "module/encoder.h"
+#include "module/decoder.h"
+#include "module/predictor.h"
+#include "module/bias_embed.h"
+#include "module/bias_encoder.h"
+#include "module/hparams.h"
+#include "module/utils.h"
+#include "module/frontend.h"
 #ifdef PARAFORMER_SHARED
 #    ifdef _WIN32
 #        ifdef PARAFORMER_BUILD
@@ -25,11 +32,7 @@
 #    define PARAFORMER_API
 #endif
 
-#define PARAFORMER_SAMPLE_RATE 16000
-#define PARAFORMER_N_FFT       400
-#define PARAFORMER_N_MEL       80
-#define PARAFORMER_HOP_LENGTH  160
-#define PARAFORMER_CHUNK_SIZE  30
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,36 +74,11 @@ extern "C" {
 // understanding of how the model works.
 //
 
-struct paraformer_context;
-struct paraformer_state;
-struct paraformer_full_params;
 
-typedef int paraformer_token;
 
-typedef struct paraformer_token_data {
-    paraformer_token id;  // token id
-    paraformer_token tid; // forced timestamp token id
 
-    float p;           // probability of the token
-    float plog;        // log probability of the token
-    float pt;          // probability of the timestamp token
-    float ptsum;       // sum of probabilities of all timestamp tokens
 
-    // token-level timestamp data
-    // do not use if you haven't computed token-level timestamps
-    int64_t t0;        // start time of the token
-    int64_t t1;        //   end time of the token
 
-    float vlen;        // voice length of the token
-} paraformer_token_data;
-
-typedef struct paraformer_model_loader {
-    void * context;
-
-    size_t (*read)(void * ctx, void * output, size_t read_size);
-    bool    (*eof)(void * ctx);
-    void  (*close)(void * ctx);
-} paraformer_model_loader;
 
 // Various functions for loading a ggml paraformer model.
 // Allocate (almost) all memory needed for the model.
@@ -139,54 +117,6 @@ PARAFORMER_API void paraformer_free      (struct paraformer_context * ctx);
 PARAFORMER_API void paraformer_free_state(struct paraformer_state * state);
 PARAFORMER_API void paraformer_free_params(struct paraformer_full_params * params);
 
-// Convert RAW PCM audio to log mel spectrogram.
-// The resulting spectrogram is stored inside the default state of the provided paraformer context.
-// Returns 0 on success
-PARAFORMER_API int paraformer_pcm_to_mel(
-        struct paraformer_context * ctx,
-        const float * samples,
-        int   n_samples,
-        int   n_threads);
-
-PARAFORMER_API int paraformer_pcm_to_mel_with_state(
-        struct paraformer_context * ctx,
-        struct paraformer_state * state,
-        const float * samples,
-        int   n_samples,
-        int   n_threads);
-
-// Convert RAW PCM audio to log mel spectrogram but applies a Phase Vocoder to speed up the audio x2.
-// The resulting spectrogram is stored inside the default state of the provided paraformer context.
-// Returns 0 on success
-PARAFORMER_API int paraformer_pcm_to_mel_phase_vocoder(
-        struct paraformer_context * ctx,
-        const float * samples,
-        int   n_samples,
-        int   n_threads);
-
-PARAFORMER_API int paraformer_pcm_to_mel_phase_vocoder_with_state(
-        struct paraformer_context * ctx,
-        struct paraformer_state * state,
-        const float * samples,
-        int   n_samples,
-        int   n_threads);
-
-// This can be used to set a custom log mel spectrogram inside the default state of the provided paraformer context.
-// Use this instead of paraformer_pcm_to_mel() if you want to provide your own log mel spectrogram.
-// n_mel must be 80
-// Returns 0 on success
-PARAFORMER_API int paraformer_set_mel(
-        struct paraformer_context * ctx,
-        const float * data,
-        int   n_len,
-        int   n_mel);
-
-PARAFORMER_API int paraformer_set_mel_with_state(
-        struct paraformer_context * ctx,
-        struct paraformer_state * state,
-        const float * data,
-        int   n_len,
-        int   n_mel);
 
 // Run the Whisper encoder on the log mel spectrogram stored inside the default state in the provided paraformer context.
 // Make sure to call paraformer_pcm_to_mel() or paraformer_set_mel() first.
@@ -247,24 +177,6 @@ PARAFORMER_API int paraformer_lang_id(const char * lang);
 // Return the short string of the specified language id (e.g. 2 -> "de"), returns nullptr if not found
 PARAFORMER_API const char * paraformer_lang_str(int id);
 
-// Use mel data at offset_ms to try and auto-detect the spoken language
-// Make sure to call paraformer_pcm_to_mel() or paraformer_set_mel() first
-// Returns the top language id or negative on failure
-// If not null, fills the lang_probs array with the probabilities of all languages
-// The array must be paraformer_lang_max_id() + 1 in size
-// ref: https://github.com/openai/paraformer/blob/main/paraformer/decoding.py#L18-L69
-PARAFORMER_API int paraformer_lang_auto_detect(
-        struct paraformer_context * ctx,
-        int   offset_ms,
-        int   n_threads,
-        float * lang_probs);
-
-PARAFORMER_API int paraformer_lang_auto_detect_with_state(
-        struct paraformer_context * ctx,
-        struct paraformer_state * state,
-        int   offset_ms,
-        int   n_threads,
-        float * lang_probs);
 
 PARAFORMER_API int paraformer_n_len           (struct paraformer_context * ctx); // mel length
 PARAFORMER_API int paraformer_n_len_from_state(struct paraformer_state * state); // mel length
@@ -298,19 +210,7 @@ PARAFORMER_API const char * paraformer_token_to_str(struct paraformer_context * 
 PARAFORMER_API const char * paraformer_model_type_readable(struct paraformer_context * ctx);
 
 
-// Special tokens
-PARAFORMER_API paraformer_token paraformer_token_eot (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_sot (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_solm(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_prev(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_nosp(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_not (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_beg (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_lang(struct paraformer_context * ctx, int lang_id);
 
-// Task tokens
-PARAFORMER_API paraformer_token paraformer_token_translate (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_transcribe(struct paraformer_context * ctx);
 
 // Performance information from the default state.
 PARAFORMER_API void paraformer_print_timings(struct paraformer_context * ctx);
@@ -362,7 +262,6 @@ struct paraformer_full_params {
     int offset_ms;          // start offset in ms
     int duration_ms;        // audio duration to process in ms
 
-    bool translate;
     bool no_context;        // do not use past transcription (if any) as initial prompt for the decoder
     bool single_segment;    // force single segment output (useful for streaming)
     bool print_special;     // print special tokens (e.g. <SOT>, <EOT>, <BEG>, etc.)
@@ -393,9 +292,6 @@ struct paraformer_full_params {
     const paraformer_token * prompt_tokens;
     int prompt_n_tokens;
 
-    // for auto-detection, set to nullptr, "" or "auto"
-    const char * language;
-    bool detect_language;
 
     // common decoding parameters:
     bool suppress_blank;    // ref: https://github.com/openai/paraformer/blob/f82bc59f5ea234d4b97fb2860842ed38519f7e65/paraformer/decoding.py#L89
@@ -406,7 +302,6 @@ struct paraformer_full_params {
     float length_penalty;   // ref: https://github.com/openai/paraformer/blob/f82bc59f5ea234d4b97fb2860842ed38519f7e65/paraformer/transcribe.py#L267
 
     // fallback parameters
-    // ref: https://github.com/openai/paraformer/blob/f82bc59f5ea234d4b97fb2860842ed38519f7e65/paraformer/transcribe.py#L274-L278
     float temperature_inc;
     float entropy_thold;    // similar to OpenAI's "compression_ratio_threshold"
     float logprob_thold;
@@ -443,7 +338,7 @@ struct paraformer_full_params {
 PARAFORMER_API struct paraformer_full_params * paraformer_full_default_params_by_ref(enum paraformer_sampling_strategy strategy);
 PARAFORMER_API struct paraformer_full_params paraformer_full_default_params(enum paraformer_sampling_strategy strategy);
 
-// Run the entire model: PCM -> log mel spectrogram -> encoder -> decoder -> text
+// Run the entire model: PCM -> fbank -> lfr -> cmvn -> bias encode -> encoder -> predictor-> decoder -> text
 // Not thread safe for same context
 // Uses the specified decoding strategy to obtain the text.
 PARAFORMER_API int paraformer_full(
@@ -516,22 +411,11 @@ PARAFORMER_API paraformer_token_data paraformer_full_get_token_data_from_state(s
 PARAFORMER_API float paraformer_full_get_token_p           (struct paraformer_context * ctx, int i_segment, int i_token);
 PARAFORMER_API float paraformer_full_get_token_p_from_state(struct paraformer_state * state, int i_segment, int i_token);
 
-////////////////////////////////////////////////////////////////////////////
 
-// Temporary helpers needed for exposing ggml interface
 
-PARAFORMER_API int          paraformer_bench_memcpy          (int n_threads);
-PARAFORMER_API const char * paraformer_bench_memcpy_str      (int n_threads);
-PARAFORMER_API int          paraformer_bench_ggml_mul_mat    (int n_threads);
-PARAFORMER_API const char * paraformer_bench_ggml_mul_mat_str(int n_threads);
 
-// Control logging output; default behavior is to print to stderr
-
-typedef void (*paraformer_log_callback)(const char * line);
-PARAFORMER_API void paraformer_set_log_callback(paraformer_log_callback callback);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
