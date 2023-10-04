@@ -11,38 +11,43 @@
 // audio encoding layer
 struct paraformer_layer_encoder {
     // encoder_attn.linear_out.weight
-    struct ggml_tensor * attn_ln_out_w;
-    struct ggml_tensor * attn_ln_out_b;
+    struct ggml_tensor * e_attn_ln_out_w;
+    struct ggml_tensor * e_attn_ln_out_b;
 
     // encoder.self_attn.linear_q_k_v.weight
-    struct ggml_tensor * attn_ln_qkv_w;
-    struct ggml_tensor * attn_ln_qkv_b;
+    struct ggml_tensor * e_attn_ln_qkv_w;
+    struct ggml_tensor * e_attn_ln_qkv_b;
 
     // encoder.self_attn.fsmn_block.weight
-    struct ggml_tensor * attn_fsmn_w;
+    struct ggml_tensor * e_attn_fsmn_w;
 
 
     // encoder.feed_forward.w_1.weight
-    struct ggml_tensor * mlp_w1;
-    struct ggml_tensor * mlp_b1;
+    struct ggml_tensor * e_mlp_w1;
+    struct ggml_tensor * e_mlp_b1;
 
     // encoder.feed_forward.w_2.weight
-    struct ggml_tensor * mlp_w2;
-    struct ggml_tensor * mlp_b2;
+    struct ggml_tensor * e_mlp_w2;
+    struct ggml_tensor * e_mlp_b2;
 
     // encoder.norm1.weight
-    struct ggml_tensor * norm_w1;
-    struct ggml_tensor * norm_b1;
+    struct ggml_tensor * e_norm_w1;
+    struct ggml_tensor * e_norm_b1;
 
     // encoder.norm2.weight
-    struct ggml_tensor * norm_w2;
-    struct ggml_tensor * norm_b2;
+    struct ggml_tensor * e_norm_w2;
+    struct ggml_tensor * e_norm_b2;
 
 };
 
 
 struct paraformer_encoder {
     std::vector<paraformer_layer_encoder> encoder_layer;
+
+    // encoder.after_norm.weight
+    struct ggml_tensor * e_after_norm_w;
+    struct ggml_tensor * e_after_norm_b;
+
 };
 
 void build_encoder(paraformer_encoder &model);
