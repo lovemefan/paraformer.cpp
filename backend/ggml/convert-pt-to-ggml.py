@@ -110,6 +110,7 @@ if __name__ == '__main__':
     fout.write(struct.pack("i", hparams["n_decoder_linear_units"]))
     fout.write(struct.pack("b", hparams["n_decoder_attention_heads"]))
     fout.write(struct.pack("b", hparams["n_decoder_layers"]))
+    fout.write(struct.pack("b", hparams["fsmn_kernel_size"]))
     fout.write(struct.pack("i", hparams["n_predictor_dim"]))
     fout.write(struct.pack("f", hparams["predictor_tail_threshold"]))
 
