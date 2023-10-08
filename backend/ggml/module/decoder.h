@@ -2,11 +2,10 @@
 // Created by lovemefan on 2023/10/1.
 //
 
-#include <vector>
-
 #ifndef PARAFORMER_CPP_DECODER_H
 #define PARAFORMER_CPP_DECODER_H
 
+#include <vector>
 #include "hparams.h"
 // token decoding layer
 struct paraformer_layer_decoder {
@@ -63,36 +62,6 @@ struct paraformer_layer_decoder {
 };
 
 
-typedef int16_t paraformer_token;
-typedef struct paraformer_token_data {
-    paraformer_token id;  // token id
-    paraformer_token tid; // forced timestamp token id
-
-    float p;           // probability of the token
-    float plog;        // log probability of the token
-    float pt;          // probability of the timestamp token
-    float ptsum;       // sum of probabilities of all timestamp tokens
-
-    // token-level timestamp data
-    // do not use if you haven't computed token-level timestamps
-    int64_t t0;        // start time of the token
-    int64_t t1;        //   end time of the token
-
-    float vlen;        // voice length of the token
-} paraformer_token_data;
-
-struct paraformer_sequence {
-    std::vector<paraformer_token_data> tokens;
-
-    // the accumulated transcription in the current iteration (used to truncate the tokens array)
-    int result_len;
-
-    double sum_logprobs_all; // the sum of the log probabilities of the tokens
-    double sum_logprobs;     // the sum of the log probabilities of the tokens (first result_len tokens)
-    double avg_logprobs;     // the average log probability of the tokens
-    double entropy;          // the entropy of the tokens
-    double score;            // likelihood rank score
-};
 
 // TAGS: PARAFORMER_DECODER_INIT
 struct paraformer_decoder {

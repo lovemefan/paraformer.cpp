@@ -6,8 +6,8 @@
 #define PARAFORMER_CPP_UTILS_H
 
 #include <vector>
-#include "../ggml.h"
-#include "../ggml-alloc.h"
+#include "ggml.h"
+#include "ggml-alloc.h"
 #include "hparams.h"
 
 #ifdef PARAFORMER_SHARED

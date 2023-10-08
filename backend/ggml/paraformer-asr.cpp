@@ -1,7 +1,7 @@
 //
 // Created by lovemefan on 2023/9/20.
 //
-#include "paraformer.h"
+#include "paraformer-asr.h"
 #ifdef PARAFORMER_USE_COREML
 #include "../coreml/paraformer-encoder.h"
 #endif

@@ -5,14 +5,8 @@
 #ifndef PARAFORMER_CPP_HPARAMS_H
 #define PARAFORMER_CPP_HPARAMS_H
 
-#include "../ggml.h"
-#include "../ggml-alloc.h"
-#include "bias_embed.h"
-#include "bias_encoder.h"
-#include "encoder.h"
-#include "predictor.h"
-#include "decoder.h"
-//#include "uitls.h"
+#include "ggml.h"
+#include "ggml-alloc.h"
 #include <vector>
 #include <string>
 #include <random>
@@ -62,9 +56,6 @@ static void log(const char * fmt, ...) {
     paraformer_log(buf);
 }
 
-struct paraformer_context;
-struct paraformer_state;
-struct paraformer_full_params;
 
 // available paraformer models
 enum e_model {
@@ -142,17 +133,6 @@ struct paraformer_vocab {
     token unk_symbol = "unk";
 };
 
-struct paraformer_segment {
-    int64_t t0;
-    int64_t t1;
-
-    std::string text;
-
-    std::vector<paraformer_token_data> tokens;
-
-    bool speaker_turn_next;
-};
-
 
 struct paraformer_hparams {
     int16_t n_vocab       = 8404; // number of vocab
@@ -161,11 +141,13 @@ struct paraformer_hparams {
     int16_t n_encoder_linear_units = 2048;
     int8_t n_encoder_attention_heads  = 4; // head of self attention
     int8_t n_encoder_layers = 50; // num block of encoder
+    int16_t n_encoder_0_norm_size = 560;
 
     int16_t n_decoder_hidden_state = 512;
     int16_t n_decoder_linear_units = 2048;
     int8_t n_decoder_attention_heads =  4;
     int8_t n_decoder_layers = 16;
+    int8_t fsmn_kernel_size = 11;
 
     int16_t n_predictor_dim = 512;
     float predictor_tail_threshold = 0.45;
@@ -182,28 +164,7 @@ struct paraformer_hparams {
 };
 
 
-// contextual bias paraformer contains bias, encoder, predict and decoder
-// more detail in https://arxiv.org/pdf/2308.03266.pdf
-struct paraformer_model {
-    e_model type = MODEL_CONTEXTUAL_OFFLINE;
-    paraformer_hparams hparams;
-    paraformer_filters filters;
 
-    paraformer_bias_embed bias_embed;
-    paraformer_bias_encoder bias_encoder;
-    paraformer_encoder encoder;
-    paraformer_decoder decoder;
-    paraformer_predictor predictor;
-    // context
-    struct ggml_context * ctx;
-
-    // the model memory buffer is read-only and can be shared between processors
-    std::vector<uint8_t> * buf;
-
-    // tensors
-    int n_loaded;
-    std::map<std::string, struct ggml_tensor *> tensors;
-};
 
 
 
@@ -245,6 +206,47 @@ struct paraformer_allocr {
     std::vector<uint8_t> data;
 };
 
+typedef int16_t paraformer_token;
+
+
+typedef struct paraformer_token_data {
+    paraformer_token id;  // token id
+    paraformer_token tid; // forced timestamp token id
+
+    float p;           // probability of the token
+    float plog;        // log probability of the token
+    float pt;          // probability of the timestamp token
+    float ptsum;       // sum of probabilities of all timestamp tokens
+
+    // token-level timestamp data
+    // do not use if you haven't computed token-level timestamps
+    int64_t t0;        // start time of the token
+    int64_t t1;        //   end time of the token
+
+    float vlen;        // voice length of the token
+} paraformer_token_data;
+
+struct paraformer_sequence {
+    std::vector<paraformer_token_data> tokens;
+
+    // the accumulated transcription in the current iteration (used to truncate the tokens array)
+    int result_len;
+
+    double sum_logprobs_all; // the sum of the log probabilities of the tokens
+    double sum_logprobs;     // the sum of the log probabilities of the tokens (first result_len tokens)
+    double avg_logprobs;     // the average log probability of the tokens
+    double entropy;          // the entropy of the tokens
+    double score;            // likelihood rank score
+};
+
+struct paraformer_segment {
+    int64_t t0;
+    int64_t t1;
+    std::string text;
+    std::vector<paraformer_token_data> tokens;
+    bool speaker_turn_next;
+};
+
 //#define PARAFORMER_USE_FLASH_ATTN
 //#define PARAFORMER_USE_FLASH_FF
 #define PARAFORMER_MAX_DECODERS 16
@@ -267,8 +269,6 @@ struct paraformer_state {
     // shared between all decoders
     paraformer_kv_cache kv_cross;
     paraformer_mel mel;
-
-    paraformer_decoder decoders[PARAFORMER_MAX_DECODERS] = {};
 
     // buffer for swapping KV caches between decoders during beam-search
     std::vector<kv_buf> kv_swap_bufs;
@@ -335,15 +335,6 @@ struct paraformer_context {
     std::string path_model; // populated by paraformer_init_from_file()
 };
 
-// Special tokens
-PARAFORMER_API paraformer_token paraformer_token_eot (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_sot (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_solm(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_prev(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_nosp(struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_not (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_beg (struct paraformer_context * ctx);
-PARAFORMER_API paraformer_token paraformer_token_lang(struct paraformer_context * ctx, int lang_id);
-static void kv_cache_free(struct paraformer_kv_cache & cache);
+
 
 #endif //PARAFORMER_CPP_HPARAMS_H

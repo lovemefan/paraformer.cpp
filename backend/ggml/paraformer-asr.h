@@ -10,14 +10,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "module/encoder.h"
 #include "module/decoder.h"
+#include "module/bias-encoder.h"
+#include "module/encoder.h"
 #include "module/predictor.h"
-#include "module/bias_embed.h"
-#include "module/bias_encoder.h"
-#include "module/hparams.h"
-#include "module/utils.h"
-#include "module/frontend.h"
+
 #ifdef PARAFORMER_SHARED
 #    ifdef _WIN32
 #        ifdef PARAFORMER_BUILD
@@ -411,9 +408,40 @@ PARAFORMER_API paraformer_token_data paraformer_full_get_token_data_from_state(s
 PARAFORMER_API float paraformer_full_get_token_p           (struct paraformer_context * ctx, int i_segment, int i_token);
 PARAFORMER_API float paraformer_full_get_token_p_from_state(struct paraformer_state * state, int i_segment, int i_token);
 
+// contextual bias paraformer contains bias, encoder, predict and decoder
+// more detail in https://arxiv.org/pdf/2308.03266.pdf
+struct paraformer_model {
+    e_model type = MODEL_CONTEXTUAL_OFFLINE;
+    paraformer_hparams hparams;
+    paraformer_filters filters;
+
+    paraformer_bias_encoder bias_encoder;
+    paraformer_encoder encoder;
+    paraformer_decoder decoder;
+    paraformer_predictor predictor;
+    // context
+    struct ggml_context * ctx;
+
+    // the model memory buffer is read-only and can be shared between processors
+    std::vector<uint8_t> * buf;
+
+    // tensors
+    int n_loaded;
+    std::map<std::string, struct ggml_tensor *> tensors;
+};
 
 
 
+// Special tokens
+PARAFORMER_API paraformer_token paraformer_token_eot (struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_sot (struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_solm(struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_prev(struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_nosp(struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_not (struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_beg (struct paraformer_context * ctx);
+PARAFORMER_API paraformer_token paraformer_token_lang(struct paraformer_context * ctx, int lang_id);
+static void kv_cache_free(struct paraformer_kv_cache & cache);
 
 #ifdef __cplusplus
 }

@@ -8,7 +8,6 @@
 #include <vector>
 #include "hparams.h"
 
-// audio encoding layer
 struct paraformer_layer_encoder {
     // encoder_attn.linear_out.weight
     struct ggml_tensor * e_attn_ln_out_w;
@@ -42,17 +41,19 @@ struct paraformer_layer_encoder {
 
 
 struct paraformer_encoder {
-    std::vector<paraformer_layer_encoder> encoder_layer;
+    ggml_type wtype = ggml_type::GGML_TYPE_F16; // weight type (FP32 / FP16 / QX)
+    ggml_type itype = ggml_type::GGML_TYPE_F16; // intermediate type (FP32 or FP16)
 
+    std::vector<paraformer_layer_encoder> encoder_layer;
     // encoder.after_norm.weight
     struct ggml_tensor * e_after_norm_w;
     struct ggml_tensor * e_after_norm_b;
 
 };
 
-void build_encoder(paraformer_encoder &model);
-static struct ggml_cgraph * paraformer_build_graph_encoder(
-        paraformer_context & wctx,
-        paraformer_state & wstate);
+void build_encoder(paraformer_encoder & encoder, ggml_context & ctx, paraformer_hparams & hparams);
+//static struct ggml_cgraph * paraformer_build_graph_encoder(
+//        paraformer_context & wctx,
+//        paraformer_state & wstate);
 
 #endif //PARAFORMER_CPP_ENCODER_H
