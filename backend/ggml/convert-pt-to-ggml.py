@@ -86,6 +86,7 @@ if __name__ == '__main__':
     hparams['n_decoder_linear_units'] = 2048
     hparams['n_decoder_attention_heads'] = 4
     hparams['n_decoder_layers'] = 16
+    hparams['fsmn_kernel_size'] = 11
     # predictor config
     hparams['n_predictor_dim'] = 512
     hparams['predictor_tail_threshold'] = 0.45
@@ -101,25 +102,25 @@ if __name__ == '__main__':
     fout = fname_out.open("wb")
 
     fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
-    fout.write(struct.pack("i", hparams["n_vocab"]))
-    fout.write(struct.pack("i", hparams["n_encoder_hidden_state"]))
-    fout.write(struct.pack("i", hparams["n_encoder_linear_units"]))
+    fout.write(struct.pack("h", hparams["n_vocab"]))
+    fout.write(struct.pack("h", hparams["n_encoder_hidden_state"]))
+    fout.write(struct.pack("h", hparams["n_encoder_linear_units"]))
     fout.write(struct.pack("b", hparams["n_encoder_attention_heads"]))
     fout.write(struct.pack("b", hparams["n_encoder_layers"]))
-    fout.write(struct.pack("i", hparams["n_decoder_hidden_state"]))
-    fout.write(struct.pack("i", hparams["n_decoder_linear_units"]))
+    fout.write(struct.pack("h", hparams["n_decoder_hidden_state"]))
+    fout.write(struct.pack("h", hparams["n_decoder_linear_units"]))
     fout.write(struct.pack("b", hparams["n_decoder_attention_heads"]))
     fout.write(struct.pack("b", hparams["n_decoder_layers"]))
     fout.write(struct.pack("b", hparams["fsmn_kernel_size"]))
-    fout.write(struct.pack("i", hparams["n_predictor_dim"]))
+    fout.write(struct.pack("h", hparams["n_predictor_dim"]))
     fout.write(struct.pack("f", hparams["predictor_tail_threshold"]))
 
 
     # write tokenizer
-    fout.write(struct.pack("i", len(tokens)))
+    fout.write(struct.pack("h", len(tokens)))
 
     for key in tokens:
-        fout.write(struct.pack("i", len(key)))
+        fout.write(struct.pack("B", len(key)))
         fout.write(key)
 
     for name in checkpoint.keys():
