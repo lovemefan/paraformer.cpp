@@ -4,84 +4,65 @@
 
 #include "encoder.h"
 
-void build_encoder(paraformer_encoder &model) {
-    model.layers_encoder.resize(n_audio_layer);
-    model.layers_decoder.resize(n_text_layer);
+void build_encoder(paraformer_encoder & encoder, ggml_context * ctx, paraformer_hparams & hparams, std::map<std::string, struct ggml_tensor *> &tensors) {
+
+    const ggml_type wtype = encoder.wtype;
+
 
     // encoder
     {
-        model.e_pe       = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_audio_state, n_audio_ctx);
+        for (int i = 0; i < hparams.n_encoder_layers; ++i) {
+            auto & layer = encoder.encoder_layer[i];
+            // encoder_attn.linear_out.weight
+            layer.e_attn_ln_out_w = ggml_new_tensor_2d(ctx, wtype, hparams.n_encoder_hidden_state, hparams.n_encoder_hidden_state);
+            layer.e_attn_ln_out_b = ggml_new_tensor_1d(ctx, wtype, hparams.n_encoder_hidden_state);
 
-        model.e_conv_1_w = ggml_new_tensor_3d(ctx, vtype,         3, n_mels, n_audio_state);
-        model.e_conv_1_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_audio_state);
+            // encoder.self_attn.linear_q_k_v.weight
+            layer.e_attn_ln_qkv_w = ggml_new_tensor_2d(ctx, wtype, 3*hparams.n_encoder_hidden_state, hparams.n_encoder_hidden_state);
+            layer.e_attn_ln_qkv_b = ggml_new_tensor_1d(ctx, wtype, 3*hparams.n_encoder_hidden_state);
 
-        model.e_conv_2_w = ggml_new_tensor_3d(ctx, vtype,         3, n_audio_state, n_audio_state);
-        model.e_conv_2_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_audio_state);
+            // encoder.self_attn.fsmn_block.weight
+            layer.e_attn_fsmn_w = ggml_new_tensor_3d(ctx, wtype, hparams.n_encoder_hidden_state, 1, hparams.fsmn_kernel_size);
 
-        model.e_ln_w     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
-        model.e_ln_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
 
-        // map by name
-        model.tensors["encoder.positional_embedding"] = model.e_pe;
+            // encoder.feed_forward.w_1.weight
+            layer.e_mlp_w1 = ggml_new_tensor_2d(ctx, wtype, hparams.n_encoder_linear_units, hparams.n_encoder_hidden_state);
+            layer.e_mlp_b1 = ggml_new_tensor_1d(ctx, wtype, hparams.n_encoder_linear_units);
 
-        model.tensors["encoder.conv1.weight"]         = model.e_conv_1_w;
-        model.tensors["encoder.conv1.bias"]           = model.e_conv_1_b;
+            // encoder.feed_forward.w_2.weight
+            layer.e_mlp_w2 = ggml_new_tensor_2d(ctx, wtype, hparams.n_encoder_hidden_state, hparams.n_encoder_linear_units);
+            layer.e_mlp_b2 = ggml_new_tensor_1d(ctx, wtype, hparams.n_encoder_hidden_state);
 
-        model.tensors["encoder.conv2.weight"]         = model.e_conv_2_w;
-        model.tensors["encoder.conv2.bias"]           = model.e_conv_2_b;
 
-        model.tensors["encoder.ln_post.weight"]       = model.e_ln_w;
-        model.tensors["encoder.ln_post.bias"]         = model.e_ln_b;
+            // encoder.norm1.weight
+            layer.e_norm_w1 = ggml_new_tensor_1d(ctx, wtype, i == 0? hparams.n_encoder_0_norm_size:hparams.n_encoder_hidden_state);
+            layer.e_norm_b1 = ggml_new_tensor_1d(ctx, wtype, i == 0? hparams.n_encoder_0_norm_size:hparams.n_encoder_hidden_state);
 
-        for (int i = 0; i < n_audio_layer; ++i) {
-            auto & layer = model.layers_encoder[i];
-
-            layer.mlp_ln_w    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-            layer.mlp_ln_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-
-            layer.mlp_0_w     = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, 4*n_audio_state);
-            layer.mlp_0_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*n_audio_state);
-
-            layer.mlp_1_w     = ggml_new_tensor_2d(ctx, wtype,         4*n_audio_state, n_audio_state);
-            layer.mlp_1_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-
-            layer.attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-            layer.attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-
-            layer.attn_q_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
-            layer.attn_q_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-
-            layer.attn_k_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
-
-            layer.attn_v_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
-            layer.attn_v_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
-
-            layer.attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
-            layer.attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
+            // encoder.norm2.weight
+            layer.e_norm_w2 = ggml_new_tensor_1d(ctx, wtype, hparams.n_encoder_hidden_state);
+            layer.e_norm_b2 = ggml_new_tensor_1d(ctx, wtype, hparams.n_encoder_hidden_state);
 
             // map by name
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.weight"]     = layer.mlp_ln_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.bias"]       = layer.mlp_ln_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1))  + ".self_attn.linear_out.weight"] = layer.e_attn_ln_out_w;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".self_attn.linear_out.bias"] = layer.e_attn_ln_out_b;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.weight"]      = layer.mlp_0_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.bias"]        = layer.mlp_0_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1))  + ".self_attn.linear_q_k_v.weight"] = layer.e_attn_ln_qkv_w;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".self_attn.linear_q_k_v.bias"] = layer.e_attn_ln_qkv_b;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.weight"]      = layer.mlp_1_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.bias"]        = layer.mlp_1_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".self_attn.fsmn_block.weight"] = layer.e_attn_fsmn_w;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.weight"]    = layer.attn_ln_0_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.bias"]      = layer.attn_ln_0_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1))  + ".feed_forward.w_1.weight"] = layer.e_mlp_w1;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".feed_forward.w_1.bias"] = layer.e_mlp_b1;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.query.weight"] = layer.attn_q_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.query.bias"]   = layer.attn_q_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1))  + ".feed_forward.w_2.weight"] = layer.e_mlp_w2;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".feed_forward.w_2.bias"] = layer.e_mlp_b2;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.key.weight"]   = layer.attn_k_w;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".norm1.weight"] = layer.e_norm_w1;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".norm1.bias"] = layer.e_norm_b1;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.value.weight"] = layer.attn_v_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.value.bias"]   = layer.attn_v_b;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".norm2.weight"] = layer.e_norm_w2;
+            tensors[i == 0 ? ("encoder.encoders0." + std::to_string(i)): ("encoder.encoders." + std::to_string(i - 1)) + ".norm2.bias"] = layer.e_norm_b2;
 
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.weight"]   = layer.attn_ln_1_w;
-            model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.bias"]     = layer.attn_ln_1_b;
         }
     }
 }
@@ -286,6 +267,7 @@ static struct ggml_cgraph * paraformer_build_graph_encoder(
             cur = ggml_mul_mat(ctx0,
                                layer.mlp_0_w,
                                cur);
+
 
             cur = ggml_add(ctx0, cur, layer.mlp_0_b);
 
