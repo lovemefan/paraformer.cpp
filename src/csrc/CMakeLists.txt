@@ -9,10 +9,23 @@ set(CMAKE_CXX_STANDARD 23)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Wall")
 
+set(SOURCE_FILES
+        paraformer-offline.h
+        paraformer-offline.cpp
+        )
+
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
 
 
-include_directories(third_party/ggml/include/ggml third_party/ggml/src)
+include_directories(${PROJECT_SOURCE_DIR}/third-party/ggml/include/ggml ${PROJECT_SOURCE_DIR}/third-party/ggml/src)
 add_subdirectory(third-party/ggml)
+
+add_library(paraformer-offline STATIC paraformer-offline.cpp)
+target_link_libraries(paraformer-offline PUBLIC ggml)
+
+
+add_executable(model_test test/model_load_test.cpp)
+
+target_link_libraries(model_test PRIVATE paraformer-offline)
