@@ -4,10 +4,11 @@
 
 #ifndef PARAFORMER_CPP_FRONTEND_H
 #define PARAFORMER_CPP_FRONTEND_H
-#include "hparams.h"
-#include <thread>
 #include <fstream>
+#include <thread>
+
+#include "module/hparams.h"
 
 static void fill_sin_cos_table();
 
-#endif //PARAFORMER_CPP_FRONTEND_H
+#endif  // PARAFORMER_CPP_FRONTEND_H
