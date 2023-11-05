@@ -182,6 +182,7 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
         read_safe(loader, hparams.n_decoder_linear_units);
         read_safe(loader, hparams.n_decoder_attention_heads);
         read_safe(loader, hparams.n_decoder_layers);
+        read_safe(loader, hparams.fsmn_kernel_size);
         read_safe(loader, hparams.n_predictor_dim);
         read_safe(loader, hparams.predictor_tail_threshold);
 
@@ -250,7 +251,7 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
 
     // load vocab
     {
-        int32_t n_vocab = 0;
+        int n_vocab = 0;
         read_safe(loader, n_vocab);
 
         if (n_vocab != model.hparams.n_vocab) {
@@ -265,7 +266,7 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
         tmp.reserve(128);
 
         for (int i = 0; i < n_vocab; i++) {
-            uint32_t len;
+            uint8_t len;
             read_safe(loader, len);
 
             if (len > 0) {

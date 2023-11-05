@@ -5,6 +5,7 @@
 #pragma once
 #include <ggml.h>
 
+#include <cstddef>
 #include <iostream>
 #include <map>
 #include <string>

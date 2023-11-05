@@ -57,21 +57,21 @@ if __name__ == '__main__':
     parse.add_argument('--fp16', action='store_true')
     args = parse.parse_args()
 
-    dir_in   = Path(args.input)
-    dir_out     = Path(args.output)
+    dir_in = Path(args.input)
+    dir_out = Path(args.output)
 
     # try to load PyTorch binary data
     try:
-        model_bytes = open(dir_in/'model.pb', "rb").read()
+        model_bytes = open(dir_in / 'model.pb', "rb").read()
         with io.BytesIO(model_bytes) as fp:
             checkpoint = torch.load(fp, map_location="cpu")
     except Exception:
-        print("Error: failed to load PyTorch model file:" , dir_in/'model.pb')
+        print("Error: failed to load PyTorch model file:", dir_in / 'model.pb')
         sys.exit(1)
 
     hparams = {}
 
-    with open(dir_in/'tokens.txt', "rb") as f:
+    with open(dir_in / 'tokens.txt', "rb") as f:
         contents = f.read()
         tokens = {token: int(rank) for rank, token in enumerate(line.strip() for line in contents.splitlines() if line)}
 
@@ -91,7 +91,6 @@ if __name__ == '__main__':
     hparams['n_predictor_dim'] = 512
     hparams['predictor_tail_threshold'] = 0.45
 
-
     print("hparams:", hparams)
     # output in the same directory as the model
     fname_out = dir_out / "paraformer-ggml-model.bin"
@@ -101,23 +100,23 @@ if __name__ == '__main__':
 
     fout = fname_out.open("wb")
 
-    fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
-    fout.write(struct.pack("h", hparams["n_vocab"]))
-    fout.write(struct.pack("h", hparams["n_encoder_hidden_state"]))
-    fout.write(struct.pack("h", hparams["n_encoder_linear_units"]))
-    fout.write(struct.pack("b", hparams["n_encoder_attention_heads"]))
-    fout.write(struct.pack("b", hparams["n_encoder_layers"]))
-    fout.write(struct.pack("h", hparams["n_decoder_hidden_state"]))
-    fout.write(struct.pack("h", hparams["n_decoder_linear_units"]))
-    fout.write(struct.pack("b", hparams["n_decoder_attention_heads"]))
-    fout.write(struct.pack("b", hparams["n_decoder_layers"]))
-    fout.write(struct.pack("b", hparams["fsmn_kernel_size"]))
-    fout.write(struct.pack("h", hparams["n_predictor_dim"]))
+    fout.write(struct.pack("i", 0x67676d6c))  # magic: ggml in hex
+    fout.write(struct.pack("i", hparams["n_vocab"]))
+    fout.write(struct.pack("i", hparams["n_encoder_hidden_state"]))
+    fout.write(struct.pack("i", hparams["n_encoder_linear_units"]))
+    fout.write(struct.pack("i", hparams["n_encoder_attention_heads"]))
+    fout.write(struct.pack("i", hparams["n_encoder_layers"]))
+    fout.write(struct.pack("i", hparams["n_decoder_hidden_state"]))
+    fout.write(struct.pack("i", hparams["n_decoder_linear_units"]))
+    fout.write(struct.pack("i", hparams["n_decoder_attention_heads"]))
+    fout.write(struct.pack("i", hparams["n_decoder_layers"]))
+    fout.write(struct.pack("i", hparams["fsmn_kernel_size"]))
+    fout.write(struct.pack("i", hparams["n_predictor_dim"]))
     fout.write(struct.pack("f", hparams["predictor_tail_threshold"]))
-
-
+    print(hparams)
     # write tokenizer
-    fout.write(struct.pack("h", len(tokens)))
+    fout.write(struct.pack("i", len(tokens)))
+    print(f"tokens num: {len(tokens)}")
 
     for key in tokens:
         fout.write(struct.pack("B", len(key)))
@@ -125,7 +124,7 @@ if __name__ == '__main__':
 
     for name in checkpoint.keys():
         data = checkpoint[name].squeeze().numpy()
-        print("Processing variable: " , name ,  " with shape: ", data.shape, ' with type: ', data.dtype)
+        print("Processing variable: ", name, " with shape: ", data.shape, ' with type: ', data.dtype)
 
         # reshape conv bias from [n] to [n, 1]
         if name in ["encoder.conv1.bias", "encoder.conv2.bias"]:
@@ -149,7 +148,6 @@ if __name__ == '__main__':
             data = data.astype(np.float32)
             ftype = 0
 
-
         str_ = name.encode('utf-8')
         fout.write(struct.pack("iii", n_dims, len(str_), ftype))
         for i in range(n_dims):
@@ -161,4 +159,4 @@ if __name__ == '__main__':
 
     fout.close()
 
-    print("Done. Output file: " , fname_out)
+    print("Done. Output file: ", fname_out)
