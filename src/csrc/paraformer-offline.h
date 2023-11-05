@@ -5,6 +5,9 @@
 #pragma once
 #include <ggml.h>
 
+#include <iostream>
+#include <map>
+#include <string>
 #ifdef GGML_USE_CUBLAS
 #include <ggml-cuda.h>
 #endif
@@ -27,12 +30,6 @@
 #define PARAFORMER_API
 #endif
 
-#define PARAFORMER_SAMPLE_RATE 16000
-#define PARAFORMER_FRAME_LENGTH 25
-#define PARAFORMER_FRAME_SHIFT 10
-#define PARAFORMER_N_MEL 80
-#define PARAFORMER_LFR_M 7
-#define PARAFORMER_LFR_N 6
 #define VOCAB_SIZE 8404
 
 // available paraformer models
@@ -282,7 +279,6 @@ struct paraformer_predictor {
 struct paraformer_model {
     e_model type = MODEL_CONTEXTUAL_OFFLINE;
     paraformer_hparams hparams;
-    paraformer_filters filters;
 
     paraformer_bias_encoder bias_encoder;
     paraformer_encoder encoder;
@@ -333,6 +329,9 @@ struct paraformer_model_loader {
     bool (*eof)(void *ctx);
     void (*close)(void *ctx);
 };
+
+bool paraformer_model_load(struct paraformer_model_loader *loader,
+                           paraformer_context &wctx);
 
 // Various functions for loading a ggml paraformer model.
 // Allocate (almost) all memory needed for the model.
