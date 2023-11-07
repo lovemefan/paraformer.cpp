@@ -61,7 +61,7 @@ struct paraformer_hparams {
     int n_decoder_hidden_state = 512;
     int n_decoder_linear_units = 2048;
     int n_decoder_attention_heads = 4;
-    int n_decoder_layers = 16;
+    int n_decoder_layers = 14;
     int fsmn_kernel_size = 11;
 
     int n_predictor_dim = 512;
@@ -123,10 +123,8 @@ struct paraformer_layer_encoder {
 };
 
 struct paraformer_encoder {
-    ggml_type wtype =
-        ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
-    ggml_type itype =
-        ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
+    ggml_type wtype = ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
+    ggml_type itype = ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
 
     std::vector<paraformer_layer_encoder> encoder_layer;
     // encoder.after_norm.weight
@@ -136,18 +134,8 @@ struct paraformer_encoder {
 
 // token decoding layer
 struct paraformer_layer_decoder {
-    // decoder.embed.0.weight
-    struct ggml_tensor *d_emb;
-    // decoder.after_norm.weight
-    struct ggml_tensor *d_norm_w;
-    struct ggml_tensor *d_norm_b;
-    // decoder.output_layer.weight
-    struct ggml_tensor *d_ln_out_w;
-    struct ggml_tensor *d_ln_out_b;
-
     // decoder.self_attn.fsmn_block.weight
     struct ggml_tensor *d_attn_fsmn_w;
-    struct ggml_tensor *d_attn_fsmn_b;
 
     // decoder.src_attn.linear_q.weight
     struct ggml_tensor *d_src_attn_ln_q_w;
@@ -186,7 +174,19 @@ struct paraformer_layer_decoder {
 };
 
 struct paraformer_decoder {
+    // decoder embedding
+    struct ggml_tensor *embed;
+
+    // decoder after norm
+    struct ggml_tensor *d_after_norm_w;
+    struct ggml_tensor *d_after_norm_b;
+
+    // decoder .output_layer
+    struct ggml_tensor *d_output_w;
+    struct ggml_tensor *d_output_b;
+
     std::vector<paraformer_layer_decoder> decoder_layers;
+
     //-------decoder.decoder3.bias_decoder------
     // decoder.decoder3.feed_forward.w_1.weight
     struct ggml_tensor *d3_mlp_ln_w1;
@@ -300,10 +300,8 @@ struct paraformer_context {
     int64_t t_load_us = 0;
     int64_t t_start_us = 0;
 
-    ggml_type wtype =
-        ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
-    ggml_type itype =
-        ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
+    ggml_type wtype = ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
+    ggml_type itype = ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
 
     paraformer_model model;
     paraformer_vocab vocab;
@@ -331,20 +329,15 @@ struct paraformer_model_loader {
     void (*close)(void *ctx);
 };
 
-bool paraformer_model_load(struct paraformer_model_loader *loader,
-                           paraformer_context &wctx);
+bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_context &wctx);
 
 // Various functions for loading a ggml paraformer model.
 // Allocate (almost) all memory needed for the model.
 // Return NULL on failure
-PARAFORMER_API struct paraformer_context *paraformer_init_from_file(
-    const char *path_model);
-PARAFORMER_API struct paraformer_context *paraformer_init_from_buffer(
-    void *buffer, size_t buffer_size);
-PARAFORMER_API struct paraformer_context *paraformer_init(
-    struct paraformer_model_loader *loader);
+PARAFORMER_API struct paraformer_context *paraformer_init_from_file(const char *path_model);
+PARAFORMER_API struct paraformer_context *paraformer_init_from_buffer(void *buffer, size_t buffer_size);
+PARAFORMER_API struct paraformer_context *paraformer_init(struct paraformer_model_loader *loader);
 
 // Frees all allocated memory
 PARAFORMER_API void paraformer_free(struct paraformer_context *ctx);
-PARAFORMER_API void paraformer_free_params(
-    struct paraformer_full_params *params);
+PARAFORMER_API void paraformer_free_params(struct paraformer_full_params *params);
