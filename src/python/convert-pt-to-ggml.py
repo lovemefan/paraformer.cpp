@@ -58,7 +58,7 @@ if __name__ == '__main__':
     args = parse.parse_args()
 
     dir_in = Path(args.input)
-    dir_out = Path(args.output)
+    output = Path(args.output)
 
     # try to load PyTorch binary data
     try:
@@ -83,9 +83,10 @@ if __name__ == '__main__':
     hparams['n_encoder_layers'] = 50
     # decoder config
     hparams['n_decoder_hidden_state'] = 512
+    hparams['n_encoder_0_norm_size'] = 560
     hparams['n_decoder_linear_units'] = 2048
     hparams['n_decoder_attention_heads'] = 4
-    hparams['n_decoder_layers'] = 16
+    hparams['n_decoder_layers'] = 15
     hparams['fsmn_kernel_size'] = 11
     # predictor config
     hparams['n_predictor_dim'] = 512
@@ -93,7 +94,7 @@ if __name__ == '__main__':
 
     print("hparams:", hparams)
     # output in the same directory as the model
-    fname_out = dir_out / "paraformer-ggml-model.bin"
+    fname_out = output
 
     # use 16-bit or 32-bit floats
     use_f16 = args.fp16
@@ -106,6 +107,7 @@ if __name__ == '__main__':
     fout.write(struct.pack("i", hparams["n_encoder_linear_units"]))
     fout.write(struct.pack("i", hparams["n_encoder_attention_heads"]))
     fout.write(struct.pack("i", hparams["n_encoder_layers"]))
+    fout.write(struct.pack("i", hparams["n_encoder_0_norm_size"]))
     fout.write(struct.pack("i", hparams["n_decoder_hidden_state"]))
     fout.write(struct.pack("i", hparams["n_decoder_linear_units"]))
     fout.write(struct.pack("i", hparams["n_decoder_attention_heads"]))
@@ -124,7 +126,6 @@ if __name__ == '__main__':
 
     for name in checkpoint.keys():
         data = checkpoint[name].squeeze().numpy()
-        print("Processing variable: ", name, " with shape: ", data.shape, ' with type: ', data.dtype)
 
         # reshape conv bias from [n] to [n, 1]
         if name in ["encoder.conv1.bias", "encoder.conv2.bias"]:
@@ -155,6 +156,7 @@ if __name__ == '__main__':
         fout.write(str_)
 
         # data
+        print("Processing variable: ", name, " with shape: ", data.shape, ' with type: ', data.dtype)
         data.tofile(fout)
 
     fout.close()
