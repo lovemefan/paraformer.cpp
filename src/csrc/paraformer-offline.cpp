@@ -101,7 +101,6 @@ static void log(const char *fmt, ...) {
 
 static const size_t MB = 1ull * 1024 * 1024;
 
-// TODO: avoid using GGUF
 static const std::map<ggml_type, std::map<e_model, size_t>> MEM_REQ_MODEL = {
     {
         GGML_TYPE_F32,
@@ -207,9 +206,9 @@ struct paraformer_context *paraformer_init_from_file(const char *path_model) {
 bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_context &wctx) {
     log("%s: loading model\n", __func__);
 
-    const int64_t t_start_us = ggml_time_us();
+    const int64_t t_start_ms = ggml_time_ms();
 
-    wctx.t_start_us = t_start_us;
+    wctx.t_start_ms = t_start_ms;
 
     auto &model = wctx.model;
     auto &vocab = wctx.vocab;
@@ -275,15 +274,6 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
         log("%s: ftype         = %d\n", __func__, model.hparams.ftype);
         log("%s: qntvr         = %d\n", __func__, qntvr);
         log("%s: type          = %d\n", __func__, model.type);
-
-        // print memory requirements
-        {
-            // TODO
-            // log("%s: mem required  = %7.2f MB (+ %7.2f MB per decoder)\n",
-            // __func__,
-            //        mem_required / 1024.0 / 1024.0, mem_required_decoder /
-            //        1024.0 / 1024.0);
-        }
 
         // initialize all memory buffers
         // always have at least one decoder
@@ -556,45 +546,218 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
                     model.tensors["decoder.decoders." + std::to_string(i) + ".norm3.bias"] = layer.d_norm_b3;
                 }
                 // decoder after norm
-                model.decoder.d_after_norm_w = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_encoder_hidden_state);
-                model.decoder.d_after_norm_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_encoder_hidden_state);
+                model.decoder.d_after_norm_w = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                model.decoder.d_after_norm_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
 
                 model.tensors["decoder.after_norm.weight"] = model.decoder.d_after_norm_w;
                 model.tensors["decoder.after_norm.bias"] = model.decoder.d_after_norm_b;
 
-                // decofer output layer
+                // decoder output layer
                 model.decoder.d_output_w =
-                    ggml_new_tensor_2d(model.ctx, wtype, hparams.n_encoder_hidden_state, hparams.n_vocab);
+                    ggml_new_tensor_2d(model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_vocab);
                 model.decoder.d_output_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_vocab);
 
                 model.tensors["decoder.output_layer.weight"] = model.decoder.d_output_w;
                 model.tensors["decoder.output_layer.bias"] = model.decoder.d_output_b;
+
+                // decoders3.0 layers
+                {
+                    //  decoder output layer
+
+                    // decoders3.0.feed_forward.w_1
+                    model.decoder.d3_mlp_ln_w1 = ggml_new_tensor_2d(model.ctx, wtype, hparams.n_encoder_hidden_state,
+                                                                    hparams.n_decoder_linear_units);
+                    model.decoder.d3_mlp_ln_b1 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+
+                    model.tensors["decoder.decoders3.0.feed_forward.w_1.weight"] = model.decoder.d3_mlp_ln_w1;
+                    model.tensors["decoder.decoders3.0.feed_forward.w_1.bias"] = model.decoder.d3_mlp_ln_b1;
+
+                    // decoders3.0.feed_forward.w_2
+                    model.decoder.d3_mlp_ln_w2 = ggml_new_tensor_2d(model.ctx, wtype, hparams.n_decoder_linear_units,
+                                                                    hparams.n_encoder_hidden_state);
+                    model.tensors["decoder.decoders3.0.feed_forward.w_2.weight"] = model.decoder.d3_mlp_ln_w2;
+
+                    // decoders3.0.feed_forward.norm
+                    model.decoder.d3_mlp_norm_w = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+                    model.decoder.d3_mlp_norm_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+                    model.tensors["decoder.decoders3.0.feed_forward.norm.weight"] = model.decoder.d3_mlp_norm_w;
+                    model.tensors["decoder.decoders3.0.feed_forward.norm.bias"] = model.decoder.d3_mlp_norm_b;
+
+                    // decoders3.0.norm1
+                    model.decoder.d3_norm_w1 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.decoder.d3_norm_b1 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.tensors["decoder.decoders3.0.norm1.weight"] = model.decoder.d3_norm_w1;
+                    model.tensors["decoder.decoders3.0.norm1.bias"] = model.decoder.d3_norm_b1;
+                }
+                // bias_decoder
+                {
+                    // bias_decoder.src_attn.linear_q
+                    model.decoder.d_bias_src_attn_ln_q_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_hidden_state);
+                    model.decoder.d_bias_src_attn_ln_q_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.tensors["decoder.bias_decoder.src_attn.linear_q.weight"] =
+                        model.decoder.d_bias_src_attn_ln_q_w;
+                    model.tensors["decoder.bias_decoder.src_attn.linear_q.bias"] = model.decoder.d_bias_src_attn_ln_q_b;
+
+                    // bias_decoder.src_attn.linear_k_v
+                    model.decoder.d_bias_src_attn_ln_kv_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_hidden_state * 2);
+                    model.decoder.d_bias_src_attn_ln_kv_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state * 2);
+                    model.tensors["decoder.bias_decoder.src_attn.linear_k_v.weight"] =
+                        model.decoder.d_bias_src_attn_ln_kv_w;
+                    model.tensors["decoder.bias_decoder.src_attn.linear_k_v.bias"] =
+                        model.decoder.d_bias_src_attn_ln_kv_b;
+
+                    // bias_decoder.src_attn.linear_out
+                    model.decoder.d_bias_src_attn_ln_o_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_hidden_state);
+                    model.decoder.d_bias_src_attn_ln_o_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.tensors["decoder.bias_decoder.src_attn.linear_out.weight"] =
+                        model.decoder.d_bias_src_attn_ln_o_w;
+                    model.tensors["decoder.bias_decoder.src_attn.linear_out.bias"] =
+                        model.decoder.d_bias_src_attn_ln_o_b;
+
+                    // bias_decoder.norm3
+                    model.decoder.d_bias_norm_w3 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.decoder.d_bias_norm_b3 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.tensors["decoder.bias_decoder.norm3.weight"] = model.decoder.d_bias_norm_w3;
+                    model.tensors["decoder.bias_decoder.norm3.bias"] = model.decoder.d_bias_norm_b3;
+
+                    // bias_decoder.output
+                    model.decoder.d_bias_ln_o_w = ggml_new_tensor_3d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state * 2, hparams.n_decoder_hidden_state, 1);
+
+                    model.tensors["decoder.bias_output.weight"] = model.decoder.d_bias_ln_o_w;
+                }
+                // decoder.last_decoder
+                {
+                    // decoder.last_decoder.self_attn.fsmn_block
+                    model.decoder.d_last_attn_fsmn_w = ggml_new_tensor_3d(model.ctx, wtype, hparams.fsmn_kernel_size,
+                                                                          hparams.n_decoder_hidden_state, 1);
+
+                    // decoder.last_decoder.self_attn.linear_q
+                    model.decoder.d_last_src_attn_ln_q_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_src_attn_ln_q_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.src_attn.linear_k_v
+                    model.decoder.d_last_src_attn_ln_kv_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, 2 * hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_src_attn_ln_kv_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, 2 * hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.src_attn.linear_out
+                    model.decoder.d_last_src_attn_ln_o_w = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_src_attn_ln_o_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.feed_forward1
+                    model.decoder.d_last_mlp_ln_w1 = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_decoder_linear_units);
+                    model.decoder.d_last_mlp_ln_b1 =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+
+                    // decoder.last_decoder.feed_forward2
+                    model.decoder.d_last_mlp_ln_w2 = ggml_new_tensor_2d(
+                        model.ctx, wtype, hparams.n_decoder_linear_units, hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.feed_forward.norm
+                    model.decoder.d_last_mlp_norm_w =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+                    model.decoder.d_last_mlp_norm_b =
+                        ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+
+                    // decoder.last_decoder.norm1.weight
+                    model.decoder.d_last_norm_w1 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_norm_b1 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.norm2.weight
+                    model.decoder.d_last_norm_w2 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_norm_b2 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+
+                    // decoder.last_decoder.norm3.weight
+                    model.decoder.d_last_norm_w3 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+                    model.decoder.d_last_norm_b3 = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_hidden_state);
+
+                    model.tensors["decoder.last_decoder.self_attn.fsmn_block.weight"] =
+                        model.decoder.d_last_attn_fsmn_w;
+
+                    model.tensors["decoder.last_decoder.src_attn.linear_q.weight"] =
+                        model.decoder.d_last_src_attn_ln_q_w;
+                    model.tensors["decoder.last_decoder.src_attn.linear_q.bias"] = model.decoder.d_last_src_attn_ln_q_b;
+
+                    model.tensors["decoder.last_decoder.src_attn.linear_k_v.weight"] =
+                        model.decoder.d_last_src_attn_ln_kv_w;
+                    model.tensors["decoder.last_decoder.src_attn.linear_k_v.bias"] =
+                        model.decoder.d_last_src_attn_ln_kv_b;
+
+                    model.tensors["decoder.last_decoder.src_attn.linear_out.weight"] =
+                        model.decoder.d_last_src_attn_ln_o_w;
+                    model.tensors["decoder.last_decoder.src_attn.linear_out.bias"] =
+                        model.decoder.d_last_src_attn_ln_o_b;
+
+                    model.tensors["decoder.last_decoder.feed_forward.w_1.weight"] = model.decoder.d_last_mlp_ln_w1;
+                    model.tensors["decoder.last_decoder.feed_forward.w_1.bias"] = model.decoder.d_last_mlp_ln_b1;
+
+                    model.tensors["decoder.last_decoder.feed_forward.w_2.weight"] = model.decoder.d_last_mlp_ln_w2;
+
+                    model.tensors["decoder.last_decoder.feed_forward.norm.weight"] = model.decoder.d_last_mlp_norm_w;
+                    model.tensors["decoder.last_decoder.feed_forward.norm.bias"] = model.decoder.d_last_mlp_norm_b;
+
+                    model.tensors["decoder.last_decoder.norm1.weight"] = model.decoder.d_last_norm_w1;
+                    model.tensors["decoder.last_decoder.norm1.bias"] = model.decoder.d_last_norm_b1;
+
+                    model.tensors["decoder.last_decoder.norm2.weight"] = model.decoder.d_last_norm_w2;
+                    model.tensors["decoder.last_decoder.norm2.bias"] = model.decoder.d_last_norm_b2;
+
+                    model.tensors["decoder.last_decoder.norm3.weight"] = model.decoder.d_last_norm_w3;
+                    model.tensors["decoder.last_decoder.norm3.bias"] = model.decoder.d_last_norm_b3;
+                }
+            }
+            // bias_encoder
+            {
+                // bias_encoder.ih_l0
+                model.bias_encoder.be_ih_l_w = ggml_new_tensor_2d(model.ctx, wtype, hparams.n_decoder_hidden_state,
+                                                                  hparams.n_decoder_linear_units);
+                model.bias_encoder.be_ih_l_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+
+                model.tensors["bias_encoder.weight_ih_l0"] = model.bias_encoder.be_ih_l_w;
+                model.tensors["bias_encoder.bias_ih_l0"] = model.bias_encoder.be_ih_l_b;
+
+                // bias_encoder.hh_l0
+                model.bias_encoder.be_hh_l_w = ggml_new_tensor_2d(model.ctx, wtype, hparams.n_decoder_hidden_state,
+                                                                  hparams.n_decoder_linear_units);
+                model.bias_encoder.be_hh_l_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_decoder_linear_units);
+
+                model.tensors["bias_encoder.weight_hh_l0"] = model.bias_encoder.be_hh_l_w;
+                model.tensors["bias_encoder.bias_hh_l0"] = model.bias_encoder.be_hh_l_b;
+
+                // bias_embed.weight
+                model.bias_encoder.bias_embed =
+                    ggml_new_tensor_2d(model.ctx, wtype, hparams.n_decoder_hidden_state, hparams.n_vocab);
+                model.tensors["bias_embed.weight"] = model.bias_encoder.bias_embed;
             }
 
             // predict layers
-            {}
-
-            //        log("%s: model ctx     = %7.2f MB\n", __func__,
-            //            ctx_size / (1024.0 * 1024.0));
-        }
-
-        // prepare memory for the weights
-        {
-            auto &ctx = model.ctx;
-
-            const auto &hparams = model.hparams;
-
-            const int n_vocab = hparams.n_vocab;
-
-            const int n_mels = hparams.n_mels;
-
-            // encoder
             {
+                // predictor.cif_conv1d
+                model.predictor.cif_conv1d_w = ggml_new_tensor_3d(model.ctx, wtype, 3, hparams.n_encoder_hidden_state,
+                                                                  hparams.n_encoder_hidden_state);
+                model.predictor.cif_conv1d_b = ggml_new_tensor_1d(model.ctx, wtype, hparams.n_encoder_hidden_state);
 
+                model.predictor.cif_ln_out_w = ggml_new_tensor_2d(model.ctx, wtype, hparams.n_encoder_hidden_state, 1);
+                model.predictor.cif_ln_out_b = ggml_new_tensor_1d(model.ctx, wtype, 1);
+
+                model.tensors["predictor.cif_conv1d.weight"] = model.predictor.cif_conv1d_w;
+                model.tensors["predictor.cif_conv1d.bias"] = model.predictor.cif_conv1d_b;
+                model.tensors["predictor.cif_output.weight"] = model.predictor.cif_ln_out_w;
+                model.tensors["predictor.cif_output.bias"] = model.predictor.cif_ln_out_b;
             }
-
-            // decoder
-            {}
         }
 
         // load weights
@@ -690,9 +853,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
                 return false;
             }
         }
-
-        wctx.t_load_us = ggml_time_us() - t_start_us;
-
-        return true;
     }
+    wctx.t_load_ms = ggml_time_ms() - t_start_ms;
+    log("%s: load paraformer model takes %f second \n", __func__, wctx.t_load_ms * 1.0 / 1000);
+    return true;
 }

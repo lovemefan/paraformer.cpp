@@ -85,12 +85,12 @@ struct paraformer_bias_encoder {
     struct ggml_tensor *bias_embed;
 
     // bias_encoder.weight_ih_l0
-    struct ggml_tensor *ih_l_w;
-    struct ggml_tensor *ihl_b;
+    struct ggml_tensor *be_ih_l_w;
+    struct ggml_tensor *be_ih_l_b;
 
     // bias_encoder.weight_hh_l0
-    struct ggml_tensor *hh_l_w;
-    struct ggml_tensor *hh_l_b;
+    struct ggml_tensor *be_hh_l_w;
+    struct ggml_tensor *be_hh_l_b;
 };
 
 struct paraformer_layer_encoder {
@@ -222,13 +222,11 @@ struct paraformer_decoder {
 
     // decoder.bias_output.weight
     struct ggml_tensor *d_bias_ln_o_w;
-    struct ggml_tensor *d_bias_ln_o_b;
 
     //-------last_decoder.bias_decoder------
 
     // decoder.last_decoder.self_attn.fsmn_block.weight
     struct ggml_tensor *d_last_attn_fsmn_w;
-    struct ggml_tensor *d_last_attn_fsmn_b;
 
     // decoder.last_decoder.src_attn.linear_q.weight
     struct ggml_tensor *d_last_src_attn_ln_q_w;
@@ -297,8 +295,8 @@ struct paraformer_model {
 };
 
 struct paraformer_context {
-    int64_t t_load_us = 0;
-    int64_t t_start_us = 0;
+    int64_t t_load_ms = 0;
+    int64_t t_start_ms = 0;
 
     ggml_type wtype = ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
     ggml_type itype = ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
