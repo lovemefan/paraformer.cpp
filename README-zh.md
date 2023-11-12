@@ -22,3 +22,10 @@ git clone https://www.modelscope.cn/damo/speech_paraformer-large-contextual_asr_
 # convert weight and vocab into ggml format
 python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404 -o resource/model --fp16
 ```
+
+## 感谢一下项目
+
+1. 本项目借用并模仿来自[whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)的c++代码
+2. 参考来自funasr的paraformer模型结构以及前向计算 [FunASR](https://github.com/alibaba-damo-academy/FunASR)
+   
+

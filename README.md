@@ -26,6 +26,7 @@ python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-larg
 
 ## Acknowledge
 
-1. we borrowed and imitated most code
+1. we borrowed and imitated most c++ code
    from [whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)
 
+2. we referenced model structure and forward detail from [FunASR](https://github.com/alibaba-damo-academy/FunASR)
