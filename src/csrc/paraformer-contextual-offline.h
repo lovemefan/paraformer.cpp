@@ -9,6 +9,8 @@
 #include <iostream>
 #include <map>
 #include <string>
+
+#include "ggml-alloc.h"
 #ifdef GGML_USE_CUBLAS
 #include <ggml-cuda.h>
 #endif
@@ -32,6 +34,7 @@
 #endif
 
 #define VOCAB_SIZE 8404
+#define PARAFORMER_MAX_NODES 4096
 
 // available paraformer models
 enum e_model { MODEL_ONLINE, MODEL_OFFLINE, MODEL_CONTEXTUAL_OFFLINE };
@@ -76,6 +79,7 @@ struct paraformer_hparams {
     int ftype = 1;
     float eps = 1e-5f;
     e_model model_type = e_model::MODEL_CONTEXTUAL_OFFLINE;
+    int n_audio_ctx;
 };
 
 // ############ model structure #############
@@ -304,6 +308,7 @@ struct paraformer_context {
     paraformer_model model;
     paraformer_vocab vocab;
 
+    struct paraformer_state *state = nullptr;
     std::string path_model;
 };
 
@@ -327,6 +332,119 @@ struct paraformer_model_loader {
     void (*close)(void *ctx);
 };
 
+struct paraformer_feature {
+    int n_len;
+    int lfr_m = 7;
+    int lfr_n = 6;
+
+    std::vector<float> data;
+};
+
+// replace std::pair by using customized pair struct (reason: std::pair is very slow)
+template <typename A, typename B>
+struct paraformer_pair {
+    A first;
+    B second;
+
+    // Define a constructor that takes two arguments.
+    paraformer_pair(const A &a, const B &b) : first(a), second(b) {}
+    // Define a constructor that takes no argument.
+    paraformer_pair() : first(A()), second(B()) {}
+};
+
+// ggml_allocr wrapper for whisper usage
+struct paraformer_allocr {
+    ggml_allocr *alloc = nullptr;
+    std::vector<uint8_t> meta;
+    std::vector<uint8_t> data;
+};
+
+struct whisper_token_data {
+    int id;   // token id
+    int tid;  // forced timestamp token id
+
+    float p;      // probability of the token
+    float plog;   // log probability of the token
+    float pt;     // probability of the timestamp token
+    float ptsum;  // sum of probabilities of all timestamp tokens
+
+    // token-level timestamp data
+    // do not use if you haven't computed token-level timestamps
+    int64_t t0;  // start time of the token
+    int64_t t1;  //   end time of the token
+
+    float vlen;  // voice length of the token
+};
+
+struct paraformer_segment {
+    int64_t t0;
+    int64_t t1;
+    std::string text;
+    std::vector<whisper_token_data> tokens;
+    bool speaker_turn_next;
+};
+
+struct paraformer_state {
+    int64_t t_sample_us = 0;
+    int64_t t_encode_us = 0;
+    int64_t t_decode_us = 0;
+    int64_t t_prompt_us = 0;
+    int64_t t_mel_us = 0;
+
+    int32_t n_sample = 0;  // number of tokens sampled
+    int32_t n_encode = 0;  // number of encoder calls
+    int32_t n_decode = 0;  // number of decoder calls with n_tokens == 1 (text-generation)
+    int32_t n_prompt = 0;  // number of decoder calls with n_tokens >  1 (prompt encoding)
+    int32_t n_fail_p = 0;  // number of logprob threshold failures
+    int32_t n_fail_h = 0;  // number of entropy threshold failures
+
+    // shared between all decoders
+    paraformer_feature feature;
+
+    // reusable buffer for `struct ggml_graph_plan.work_data`
+    std::vector<uint8_t> work_buffer;
+
+    // ggml-alloc:
+    // - stores meta info about the intermediate tensors into the `meta` buffers
+    // - stores the actual tensor data into the `data` buffers
+    paraformer_allocr alloc_bias_encoder;
+    paraformer_allocr alloc_encode;
+    paraformer_allocr alloc_predict;
+    paraformer_allocr alloc_decode;
+
+    // result of the encoder
+    struct ggml_tensor *embd_enc = nullptr;
+
+    // decode output (2-dimensional array: [n_tokens][n_vocab])
+    std::vector<float> logits;
+
+    std::vector<paraformer_segment> result_all;
+    std::vector<int> prompt_past;
+
+    // work container used to avoid memory allocations
+    std::vector<paraformer_pair<double, paraformer_vocab::id>> logits_id;
+
+    int lang_id = 0;  // english by default
+
+    std::string path_model;  // populated by whisper_init_from_file()
+#ifdef USE_COREML
+    whisper_coreml_context *ctx_coreml = nullptr;
+#endif
+
+#ifdef GGML_USE_METAL
+    ggml_metal_context *ctx_metal = nullptr;
+#endif
+
+    // [EXPERIMENTAL] token-level timestamps data
+    int64_t t_beg = 0;
+    int64_t t_last = 0;
+    int tid_last;
+    std::vector<float> energy;  // PCM signal energy
+
+    // [EXPERIMENTAL] speed-up techniques
+    int32_t exp_n_audio_ctx = 0;  // 0 - use default
+};
+
 bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_context &wctx);
 
 // Various functions for loading a ggml paraformer model.
@@ -335,6 +453,12 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
 PARAFORMER_API struct paraformer_context *paraformer_init_from_file(const char *path_model);
 PARAFORMER_API struct paraformer_context *paraformer_init_from_buffer(void *buffer, size_t buffer_size);
 PARAFORMER_API struct paraformer_context *paraformer_init(struct paraformer_model_loader *loader);
+PARAFORMER_API struct paraformer_state *paraformer_init_state(paraformer_context *ctx);
+PARAFORMER_API struct ggml_cgraph *paraformer_build_graph_bias_encoder(paraformer_context &wctx,
+                                                                       paraformer_state &wstate);
+PARAFORMER_API struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &wctx, paraformer_state &wstate);
+PARAFORMER_API struct ggml_cgraph *paraformer_build_graph_predict(paraformer_context &wctx, paraformer_state &wstate);
+PARAFORMER_API struct ggml_cgraph *paraformer_build_graph_decoder(paraformer_context &wctx, paraformer_state &wstate);
 
 // Frees all allocated memory
 PARAFORMER_API void paraformer_free(struct paraformer_context *ctx);

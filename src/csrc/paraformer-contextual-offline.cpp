@@ -2,7 +2,9 @@
 // Created by lovemefan on 2023/11/4.
 //
 
-#include "paraformer-offline.h"
+#include "paraformer-contextual-offline.h"
+
+#include <math.h>
 
 #include <fstream>
 #if defined(_MSC_VER)
@@ -77,12 +79,12 @@ static void byteswap_tensor(ggml_tensor *tensor) {
     } while (0)
 #endif
 
-#define PARAFORMER_ASSERT(x)                                            \
-    do {                                                                \
-        if (!(x)) {                                                     \
-            log("WHISPER_ASSERT: %s:%d: %s\n", __FILE__, __LINE__, #x); \
-            abort();                                                    \
-        }                                                               \
+#define PARAFORMER_ASSERT(x)                                               \
+    do {                                                                   \
+        if (!(x)) {                                                        \
+            log("PARAFORMER_ASSERT: %s:%d: %s\n", __FILE__, __LINE__, #x); \
+            abort();                                                       \
+        }                                                                  \
     } while (0)
 
 template <typename T>
@@ -137,10 +139,43 @@ static const std::map<ggml_type, std::map<e_model, size_t>> MEM_REQ_MODEL = {
     },
 };
 
+static size_t paraformer_allocr_size(struct paraformer_allocr &allocr) {
+    return allocr.meta.size() + allocr.data.size();
+}
+
+// measure the memory usage of a graph and prepare the allocr's internal data buffer
+static void paraformer_allocr_graph_init(struct paraformer_allocr &allocr,
+                                         std::function<struct ggml_cgraph *()> &&get_graph) {
+    const int tensor_alignment = 32;
+
+    auto &alloc = allocr.alloc;
+    auto &meta = allocr.meta;
+    auto &data = allocr.data;
+
+    meta.resize(ggml_tensor_overhead() * PARAFORMER_MAX_NODES + ggml_graph_overhead());
+
+    alloc = ggml_allocr_new_measure(tensor_alignment);
+
+    const size_t alloc_size = ggml_allocr_alloc_graph(alloc, get_graph()) + tensor_alignment;
+
+    ggml_allocr_free(alloc);
+
+    data.resize(alloc_size);
+
+    alloc = ggml_allocr_new(data.data(), data.size(), tensor_alignment);
+}
+
+static void paraformer_allocr_free(struct paraformer_allocr &allocr) {
+    if (allocr.alloc) {
+        ggml_allocr_free(allocr.alloc);
+        allocr.alloc = nullptr;
+    }
+}
+
 struct paraformer_context *paraformer_init(struct paraformer_model_loader *loader) {
     ggml_time_init();
 
-    paraformer_context *ctx = new paraformer_context;
+    struct paraformer_context *ctx = new paraformer_context;
 
     if (!paraformer_model_load(loader, *ctx)) {
         loader->close(loader->context);
@@ -184,6 +219,7 @@ struct paraformer_context *paraformer_init_from_file(const char *path_model) {
     };
 
     auto ctx = paraformer_init(&loader);
+    paraformer_init_state(ctx);
 
     if (ctx) {
         ctx->path_model = path_model;
@@ -203,15 +239,15 @@ struct paraformer_context *paraformer_init_from_file(const char *path_model) {
 //
 // see the convert-pt-to-ggml.py script for details
 //
-bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_context &wctx) {
+bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_context &pctx) {
     log("%s: loading model\n", __func__);
 
     const int64_t t_start_ms = ggml_time_ms();
 
-    wctx.t_start_ms = t_start_ms;
+    pctx.t_start_ms = t_start_ms;
 
-    auto &model = wctx.model;
-    auto &vocab = wctx.vocab;
+    auto &model = pctx.model;
+    auto &vocab = pctx.vocab;
 
     // verify magic
     {
@@ -251,8 +287,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
         // for the big tensors, we have the option to store the data in 16-bit
         // floats or quantized in order to save memory and also to speed up the
         // computation
-        wctx.wtype = ggml_ftype_to_ggml_type((ggml_ftype)(model.hparams.ftype));
-        if (wctx.wtype == GGML_TYPE_COUNT) {
+        pctx.wtype = ggml_ftype_to_ggml_type((ggml_ftype)(model.hparams.ftype));
+        if (pctx.wtype == GGML_TYPE_COUNT) {
             log("%s: invalid model (bad ftype value %d)\n", __func__, model.hparams.ftype);
             return false;
         }
@@ -278,8 +314,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
         // initialize all memory buffers
         // always have at least one decoder
 
-        wctx.model.buf = new std::vector<uint8_t>();
-        wctx.model.buf->resize(scale * MEM_REQ_MODEL.at(wctx.wtype).at(model.type));
+        pctx.model.buf = new std::vector<uint8_t>();
+        pctx.model.buf->resize(scale * MEM_REQ_MODEL.at(pctx.wtype).at(model.type));
 
         // we skip initialization of the state until it is needed
         // because it might be that state will always be provided externally.
@@ -328,14 +364,14 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
 
     size_t ctx_size = 0;
 
-    const ggml_type wtype = wctx.wtype;
-    const ggml_type vtype = wctx.wtype == GGML_TYPE_F32 ? GGML_TYPE_F32 : GGML_TYPE_F16;  // conv type
+    const ggml_type wtype = pctx.wtype;
+    const ggml_type vtype = pctx.wtype == GGML_TYPE_F32 ? GGML_TYPE_F32 : GGML_TYPE_F16;  // conv type
 
     // create the ggml context
     {
         struct ggml_init_params params = {
-            /*.mem_size   =*/wctx.model.buf->size(),
-            /*.mem_buffer =*/wctx.model.buf->data(),
+            /*.mem_size   =*/pctx.model.buf->size(),
+            /*.mem_buffer =*/pctx.model.buf->data(),
             /*.no_alloc   =*/false,
         };
 
@@ -854,7 +890,329 @@ bool paraformer_model_load(struct paraformer_model_loader *loader, paraformer_co
             }
         }
     }
-    wctx.t_load_ms = ggml_time_ms() - t_start_ms;
-    log("%s: load paraformer model takes %f second \n", __func__, wctx.t_load_ms * 1.0 / 1000);
+    pctx.t_load_ms = ggml_time_ms() - t_start_ms;
+    log("%s: load paraformer model takes %f second \n", __func__, pctx.t_load_ms * 1.0 / 1000);
     return true;
+}
+
+// static struct ggml_cgraph *paraformer_build_bias_encoder(paraformer_context &pctx, paraformer_state &pstate,
+//                                                          const int mel_offset) {
+//     const auto &model = pctx.model;
+//     const auto &mel_inp = pstate.feature;
+//     const auto &hparams = model.hparams;
+//
+//     const int n_ctx = pstate.exp_n_audio_ctx > 0 ? pstate.exp_n_audio_ctx : hparams.n_audio_ctx;
+//     const int n_state = hparams.n_audio_state;
+//     GGML_UNUSED(n_state);
+//
+//     const int n_mels = hparams.n_mels;
+//
+//     struct ggml_init_params params = {
+//         /*.mem_size   =*/pstate.alloc_conv.meta.size(),
+//         /*.mem_buffer =*/pstate.alloc_conv.meta.data(),
+//         /*.no_alloc   =*/true,
+//     };
+//
+//     struct ggml_context *ctx0 = ggml_init(params);
+//
+//     ggml_cgraph *gf = ggml_new_graph(ctx0);
+//
+//     ggml_allocr *alloc = pstate.alloc_conv.alloc;
+//
+//     struct ggml_tensor *mel = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 2 * n_ctx, n_mels);
+//     ggml_allocr_alloc(alloc, mel);
+//
+//     assert(mel->type == GGML_TYPE_F32);
+//     if (!ggml_allocr_is_measure(alloc)) {
+//         assert(mel_inp.n_mel == n_mels);
+//
+//         float *dst = (float *)mel->data;
+//         memset(dst, 0, ggml_nbytes(mel));
+//
+//         const int i0 = std::min(mel_offset, mel_inp.n_len);
+//         const int i1 = std::min(mel_offset + 2 * n_ctx, mel_inp.n_len);
+//
+//         for (int j = 0; j < mel_inp.n_mel; ++j) {
+//             for (int i = i0; i < i1; ++i) {
+//                 dst[j * 2 * n_ctx + (i - i0)] = mel_inp.data[j * mel_inp.n_len + i];
+//             }
+//         }
+//     }
+//
+//     struct ggml_tensor *cur = nullptr;
+//
+//     // convolution + gelu
+//     {
+//         cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
+//         cur = ggml_add(ctx0, ggml_repeat(ctx0, model.e_conv_1_b, cur), cur);
+//
+//         cur = ggml_gelu(ctx0, cur);
+//
+//         cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
+//         cur = ggml_add(ctx0, ggml_repeat(ctx0, model.e_conv_2_b, cur), cur);
+//
+//         cur = ggml_gelu(ctx0, cur);
+//     }
+//
+//     pstate.embd_conv = cur;
+//
+//     ggml_build_forward_expand(gf, cur);
+//
+//     ggml_free(ctx0);
+//
+//     return gf;
+// }
+
+struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
+    struct paraformer_state *state = new paraformer_state;
+
+#ifdef USE_COREML
+    const auto path_coreml = PARAFORMER_get_coreml_path_encoder(ctx->path_model);
+
+    log("%s: loading Core ML model from '%s'\n", __func__, path_coreml.c_str());
+    log("%s: first run on a device may take a while ...\n", __func__);
+
+    state->ctx_coreml = PARAFORMER_coreml_init(path_coreml.c_str());
+    if (!state->ctx_coreml) {
+        log("%s: failed to load Core ML model from '%s'\n", __func__, path_coreml.c_str());
+#ifndef COREML_ALLOW_FALLBACK
+        delete state;
+        return nullptr;
+#endif
+    } else {
+        log("%s: Core ML model loaded\n", __func__);
+    }
+#endif
+
+    //    state->logits.reserve(ctx->vocab.n_vocab * ctx->model.hparams.n_text_ctx);
+
+    state->logits_id.reserve(ctx->model.hparams.n_vocab);
+
+    // todo bias allocator
+
+    //    {
+    //        paraformer_allocr_graph_init(state->alloc_bias_encoder, [&]() { return paraformer_build_graph_bias(*ctx,
+    //        *state, 0); });
+    //
+    //        log("%s: compute buffer (conv)   = %7.2f MB\n", __func__,
+    //            PARAFORMER_allocr_size(state->alloc_bias_encoder) / 1024.0 / 1024.0);
+    //    }
+
+    // encoder allocator
+    {
+        state->embd_enc = ggml_new_tensor_2d(ctx->model.ctx, GGML_TYPE_F16, 132, 512);
+        paraformer_allocr_graph_init(state->alloc_encode,
+                                     [&]() { return paraformer_build_graph_encoder(*ctx, *state); });
+
+        log("%s: compute buffer (encode) = %7.2f MB\n", __func__,
+            paraformer_allocr_size(state->alloc_encode) / 1024.0 / 1024.0);
+    }
+
+    // todo predict allocator
+    {
+        //        paraformer_allocr_graph_init(state->alloc_predict,
+        //                                     [&]() { return paraformer_build_graph_predict(*ctx, *state); });
+
+        log("%s: compute buffer (cross)  = %7.2f MB\n", __func__,
+            paraformer_allocr_size(state->alloc_predict) / 1024.0 / 1024.0);
+    }
+
+    // todo decoder allocator
+    {
+        log("%s: compute buffer (decode) = %7.2f MB\n", __func__,
+            paraformer_allocr_size(state->alloc_decode) / 1024.0 / 1024.0);
+    }
+
+#ifdef GGML_USE_METAL
+    state->ctx_metal = ggml_metal_init(1);
+    if (!state->ctx_metal) {
+        log("%s: ggml_metal_init() failed\n", __func__);
+        delete state;
+        return nullptr;
+    }
+
+    log("%s: Metal context initialized\n", __func__);
+
+    // this allocates all Metal resources and memory buffers
+
+    void *data_ptr = NULL;
+    size_t data_size = 0;
+
+    // TODO: add mmap support
+    // if (params.use_mmap) {
+    //    data_ptr  = ctx->model.mapping->addr;
+    //    data_size = ctx->model.mapping->size;
+    //} else {
+    //    data_ptr  = ggml_get_mem_buffer(ctx->model.ctx);
+    //    data_size = ggml_get_mem_size  (ctx->model.ctx);
+    //}
+
+    data_ptr = ggml_get_mem_buffer(ctx->model.ctx);
+    data_size = ggml_get_mem_size(ctx->model.ctx);
+
+    const size_t max_size = ggml_get_max_tensor_size(ctx->model.ctx);
+
+    log("%s: max tensor size = %8.2f MB\n", __func__, max_size / 1024.0 / 1024.0);
+
+#define PARAFORMER_METAL_CHECK_BUF(result)                 \
+    if (!(result)) {                                       \
+        log("%s: failed to add metal buffer\n", __func__); \
+        delete state;                                      \
+        return nullptr;                                    \
+    }
+
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "data", data_ptr, data_size, max_size));
+
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "meta_conv", state->alloc_conv.meta.data(),
+                                                     state->alloc_conv.meta.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "meta_encode", state->alloc_encode.meta.data(),
+                                                     state->alloc_encode.meta.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "meta_cross", state->alloc_cross.meta.data(),
+                                                     state->alloc_cross.meta.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "meta_decode", state->alloc_decode.meta.data(),
+                                                     state->alloc_decode.meta.size(), 0));
+
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "data_conv", state->alloc_conv.data.data(),
+                                                     state->alloc_conv.data.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "data_encode", state->alloc_encode.data.data(),
+                                                     state->alloc_encode.data.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "data_cross", state->alloc_cross.data.data(),
+                                                     state->alloc_cross.data.size(), 0));
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "data_decode", state->alloc_decode.data.data(),
+                                                     state->alloc_decode.data.size(), 0));
+
+    PARAFORMER_METAL_CHECK_BUF(
+        ggml_metal_add_buffer(state->ctx_metal, "kv_cross", state->kv_cross.buf.data(), state->kv_cross.buf.size(), 0));
+
+    PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(state->ctx_metal, "kv_self_0",
+                                                     state->decoders[0].kv_self.buf.data(),
+                                                     state->decoders[0].kv_self.buf.size(), 0));
+#undef PARAFORMER_METAL_CHECK_BUF
+#endif
+
+    return state;
+}
+
+struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx, paraformer_state &pstate) {
+    const auto &model = pctx.model;
+    const auto &hparams = model.hparams;
+    const int n_ctx = pstate.exp_n_audio_ctx > 0 ? pstate.exp_n_audio_ctx : hparams.n_audio_ctx;
+    const int n_state = hparams.n_encoder_hidden_state;
+    const int n_head = hparams.n_encoder_attention_heads;
+    const int n_layer = hparams.n_encoder_layers;
+
+    struct ggml_init_params params = {
+        /*.mem_size   =*/pstate.alloc_encode.meta.size(),
+        /*.mem_buffer =*/pstate.alloc_encode.meta.data(),
+        /*.no_alloc   =*/true,
+    };
+
+    struct ggml_context *ctx0 = ggml_init(params);
+
+    // todo   change the parameter 4096
+    ggml_cgraph *gf = ggml_new_graph_custom(ctx0, 4096, false);
+
+    ggml_allocr *alloc = pstate.alloc_encode.alloc;
+
+    struct ggml_tensor *cur = ggml_view_tensor(ctx0, pstate.embd_enc);
+
+    const auto dim = cur->ne[1];
+    struct ggml_tensor *position = ggml_new_tensor_2d(ctx0, pctx.wtype, n_ctx, dim);
+    ggml_allocr_alloc(alloc, position);
+    if (!ggml_allocr_is_measure(alloc)) {
+        log("ggml allocr error");
+    }
+
+    // SinusoidalPositionEncoder
+    // position = concat(sin(10000^(-2i/(dim -2))), cos(10000^(-2i/(dim -2)))
+    // ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/funasr/modules/embedding.py#L420-L426
+
+    for (int j = 0; j < n_ctx; j++) {
+        for (int k = 0; k < dim; k++) {
+            if (k < (dim / 2)) {
+                ((float **)position->data)[j][k] = sin((j + 1) * pow(10000, (-2 * k) / (dim - 2)));
+            } else {
+                ((float **)position->data)[j][k] = cos((j + 1) * pow(10000, (-2 * (k - 128)) / (dim - 2)));
+            }
+        }
+    }
+
+    cur = ggml_add(ctx0, cur, position);
+
+    for (int il = 0; il < hparams.n_encoder_hidden_state; ++il) {
+        const auto &layer = model.encoder.encoder_layer[il];
+
+        // norm1
+        {
+            cur = ggml_norm(ctx0, cur, hparams.eps);
+
+            // cur = norm1.weight * cur + norm1 * bias
+            cur = ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_norm_w1), layer.e_norm_b1);
+        }
+
+        // norm2
+        {
+            cur = ggml_norm(ctx0, cur, hparams.eps);
+
+            // cur = norm2.weight * cur + norm2 * bias
+            cur = ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_norm_w2), layer.e_norm_b2);
+        }
+
+        // self-attention
+        {
+            // self attention linear qkv
+            cur = ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_attn_ln_qkv_w), layer.e_attn_ln_qkv_b);
+
+            // split qkv into separate tensors
+            //  ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/funasr/modules/attention.py#L391-L396
+            struct ggml_tensor *Q;
+            struct ggml_tensor *K;
+            struct ggml_tensor *V;
+
+            Q = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 0 * cur->nb[2], sizeof(pctx.wtype));
+            Q = ggml_reshape_4d(ctx0, Q, n_state / n_head, n_head, n_ctx, 1);
+            Q = ggml_cont(ctx0, ggml_permute(ctx0, Q, 0, 2, 1, 3));
+            Q = ggml_reshape_3d(ctx0, Q, n_state, n_ctx, n_head);
+
+            K = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 1 * cur->nb[2], sizeof(pctx.wtype));
+            K = ggml_reshape_4d(ctx0, K, n_state / n_head, n_head, n_ctx, 1);
+            K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+            K = ggml_reshape_3d(ctx0, K, n_state, n_ctx, n_head);
+
+            V = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 2 * cur->nb[2], sizeof(pctx.wtype));
+            V = ggml_reshape_4d(ctx0, V, n_state / n_head, n_head, n_ctx, 1);
+            V = ggml_cont(ctx0, ggml_permute(ctx0, V, 1, 2, 0, 3));  // transposed
+            V = ggml_reshape_3d(ctx0, V, n_state, n_ctx, n_head);
+
+            // fsmn forward with V
+            // todo transpose(1,2)
+            V = ggml_conv_1d_ph(ctx0, V, layer.e_attn_fsmn_w, 1, 1);
+
+#ifdef USE_FLASH_ATTN
+
+            struct ggml_tensor *KQV = ggml_flash_attn(ctx0, Q, K, V, false);
+#else
+
+            // K * Q
+            struct ggml_tensor *KQ = ggml_mul_mat(ctx0, K, Q);
+
+            struct ggml_tensor *KQscale = ggml_new_tensor_1d(ctx0, pctx.wtype, 1);
+            ggml_allocr_alloc(alloc, KQscale);
+
+            struct ggml_tensor *KQ_scaled = ggml_scale(ctx0, KQ, KQscale);
+
+            struct ggml_tensor *KQ_soft_max = ggml_soft_max(ctx0, KQ_scaled);
+
+            struct ggml_tensor *KQV = ggml_mul_mat(ctx0, V, KQ_soft_max);
+#endif
+            struct ggml_tensor *KQV_merged = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
+            cur = ggml_cpy(ctx0, KQV_merged, ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx));
+        }
+    }
+
+    ggml_build_forward_expand(gf, cur);
+
+    ggml_free(ctx0);
+
+    return gf;
 }
