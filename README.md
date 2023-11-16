@@ -9,6 +9,10 @@ with [ggml](https://github.com/ggerganov/ggml/)
 - [x] Initialize model
 - [x] Load model parameters and vocabulary
 - [ ] Build calculation forward graph
+    - [x] encoder
+    - [ ] predictor
+    - [ ] decoder
+    - [ ] bias encoder
 
 ## usage
 

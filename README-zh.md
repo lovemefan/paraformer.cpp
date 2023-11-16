@@ -8,6 +8,10 @@ paraformer是阿里funasr开源的中文语音识别模型。 本项目基于ggm
 - [x] 初始化模型
 - [x] 加载模型参数和词表
 - [ ] 构建计算图
+    - [x] encoder
+    - [ ] predictor
+    - [ ] decoder
+    - [ ] bias encoder
 
 ## 使用
 
@@ -23,9 +27,10 @@ git clone https://www.modelscope.cn/damo/speech_paraformer-large-contextual_asr_
 python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404 -o resource/model --fp16
 ```
 
-## 感谢一下项目
+## 感谢以下项目
 
-1. 本项目借用并模仿来自[whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)的c++代码
+1. 本项目借用并模仿来自[whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)
+   的大部分c++代码
 2. 参考来自funasr的paraformer模型结构以及前向计算 [FunASR](https://github.com/alibaba-damo-academy/FunASR)
    
 
