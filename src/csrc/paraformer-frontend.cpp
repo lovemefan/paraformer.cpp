@@ -2,8 +2,9 @@
 // Created by lovemefan on 2023/10/3.
 //
 
-#include "frontend.h"
-#define SIN_COS_N_COUNT PARAFORMER_N_FFT
+#include "paraformer-frontend.h"
+#define SIN_COS_N_COUNT 80
+
 static float sin_vals[SIN_COS_N_COUNT];
 static float cos_vals[SIN_COS_N_COUNT];
 
@@ -13,7 +14,7 @@ static void fill_sin_cos_table() {
     static bool is_filled = false;
     if (is_filled) return;
     for (int i = 0; i < SIN_COS_N_COUNT; i++) {
-        double theta = (2*M_PI*i)/SIN_COS_N_COUNT;
+        double theta = (2 * M_PI * i) / SIN_COS_N_COUNT;
         sin_vals[i] = sinf(theta);
         cos_vals[i] = cosf(theta);
     }
@@ -23,10 +24,10 @@ static void fill_sin_cos_table() {
 // naive Discrete Fourier Transform
 // input is real-valued
 // output is complex-valued
-static void dft(const std::vector<float> & in, std::vector<float> & out) {
+static void dft(const std::vector<float> &in, std::vector<float> &out) {
     int N = in.size();
 
-    out.resize(N*2);
+    out.resize(N * 2);
     const int sin_cos_step = SIN_COS_N_COUNT / N;
 
     for (int k = 0; k < N; k++) {
@@ -34,13 +35,13 @@ static void dft(const std::vector<float> & in, std::vector<float> & out) {
         float im = 0;
 
         for (int n = 0; n < N; n++) {
-            int idx = (k * n * sin_cos_step) % (SIN_COS_N_COUNT); // t = 2*M_PI*k*n/N
-            re += in[n]*cos_vals[idx]; // cos(t)
-            im -= in[n]*sin_vals[idx]; // sin(t)
+            int idx = (k * n * sin_cos_step) % (SIN_COS_N_COUNT);  // t = 2*M_PI*k*n/N
+            re += in[n] * cos_vals[idx];                           // cos(t)
+            im -= in[n] * sin_vals[idx];                           // sin(t)
         }
 
-        out[k*2 + 0] = re;
-        out[k*2 + 1] = im;
+        out[k * 2 + 0] = re;
+        out[k * 2 + 1] = im;
     }
 }
 
@@ -48,8 +49,8 @@ static void dft(const std::vector<float> & in, std::vector<float> & out) {
 // poor man's implementation - use something better
 // input is real-valued
 // output is complex-valued
-static void fft(const std::vector<float> & in, std::vector<float> & out) {
-    out.resize(in.size()*2);
+static void fft(const std::vector<float> &in, std::vector<float> &out) {
+    out.resize(in.size() * 2);
 
     int N = in.size();
 
@@ -59,7 +60,7 @@ static void fft(const std::vector<float> & in, std::vector<float> & out) {
         return;
     }
 
-    if (N%2 == 1) {
+    if (N % 2 == 1) {
         dft(in, out);
         return;
     }
@@ -67,8 +68,8 @@ static void fft(const std::vector<float> & in, std::vector<float> & out) {
     std::vector<float> even;
     std::vector<float> odd;
 
-    even.reserve(N/2);
-    odd.reserve(N/2);
+    even.reserve(N / 2);
+    odd.reserve(N / 2);
 
     for (int i = 0; i < N; i++) {
         if (i % 2 == 0) {
@@ -85,23 +86,23 @@ static void fft(const std::vector<float> & in, std::vector<float> & out) {
     fft(odd, odd_fft);
 
     const int sin_cos_step = SIN_COS_N_COUNT / N;
-    for (int k = 0; k < N/2; k++) {
-        int idx = k * sin_cos_step; // t = 2*M_PI*k/N
-        float re = cos_vals[idx]; // cos(t)
-        float im = -sin_vals[idx]; // sin(t)
+    for (int k = 0; k < N / 2; k++) {
+        int idx = k * sin_cos_step;  // t = 2*M_PI*k/N
+        float re = cos_vals[idx];    // cos(t)
+        float im = -sin_vals[idx];   // sin(t)
 
-        float re_odd = odd_fft[2*k + 0];
-        float im_odd = odd_fft[2*k + 1];
+        float re_odd = odd_fft[2 * k + 0];
+        float im_odd = odd_fft[2 * k + 1];
 
-        out[2*k + 0] = even_fft[2*k + 0] + re*re_odd - im*im_odd;
-        out[2*k + 1] = even_fft[2*k + 1] + re*im_odd + im*re_odd;
+        out[2 * k + 0] = even_fft[2 * k + 0] + re * re_odd - im * im_odd;
+        out[2 * k + 1] = even_fft[2 * k + 1] + re * im_odd + im * re_odd;
 
-        out[2*(k + N/2) + 0] = even_fft[2*k + 0] - re*re_odd + im*im_odd;
-        out[2*(k + N/2) + 1] = even_fft[2*k + 1] - re*im_odd - im*re_odd;
+        out[2 * (k + N / 2) + 0] = even_fft[2 * k + 0] - re * re_odd + im * im_odd;
+        out[2 * (k + N / 2) + 1] = even_fft[2 * k + 1] - re * im_odd - im * re_odd;
     }
 }
 
-static bool hann_window(int length, bool periodic, std::vector<float> & output) {
+static bool hann_window(int length, bool periodic, std::vector<float> &output) {
     if (output.size() < static_cast<size_t>(length)) {
         output.resize(length);
     }
@@ -110,15 +111,16 @@ static bool hann_window(int length, bool periodic, std::vector<float> & output) 
         offset = 0;
     }
     for (int i = 0; i < length; i++) {
-        output[i] = 0.5*(1.0 - cosf((2.0*M_PI*i)/(length + offset)));
+        output[i] = 0.5 * (1.0 - cosf((2.0 * M_PI * i) / (length + offset)));
     }
 
     return true;
 }
 
-static void log_mel_spectrogram_worker_thread(int ith, const std::vector<float> & hann, const std::vector<float> & samples,
-                                              int n_samples, int frame_size, int frame_step, int n_threads,
-                                              const paraformer_filters & filters, paraformer_mel & mel) {
+static void fbank_lfr_cmvn_feature_worker_thread(int ith, const std::vector<float> &hann,
+                                                 const std::vector<float> &samples, int n_samples, int frame_size,
+                                                 int frame_step, int n_threads, const paraformer_filters &filters,
+                                                 paraformer_mel &mel) {
     std::vector<float> fft_in(frame_size, 0.0);
     std::vector<float> fft_out(2 * frame_step);
     // make sure n_fft == 1 + (PARAFORMER_N_FFT / 2), bin_0 to bin_nyquist
@@ -154,11 +156,10 @@ static void log_mel_spectrogram_worker_thread(int ith, const std::vector<float> 
             // unroll loop (suggested by GH user @lunixbochs)
             int k = 0;
             for (k = 0; k < n_fft - 3; k += 4) {
-                sum +=
-                        fft_out[k + 0] * filters.data[j * n_fft + k + 0] +
-                        fft_out[k + 1] * filters.data[j * n_fft + k + 1] +
-                        fft_out[k + 2] * filters.data[j * n_fft + k + 2] +
-                        fft_out[k + 3] * filters.data[j * n_fft + k + 3];
+                sum += fft_out[k + 0] * filters.data[j * n_fft + k + 0] +
+                       fft_out[k + 1] * filters.data[j * n_fft + k + 1] +
+                       fft_out[k + 2] * filters.data[j * n_fft + k + 2] +
+                       fft_out[k + 3] * filters.data[j * n_fft + k + 3];
             }
 
             // handle n_fft remainder
@@ -181,27 +182,17 @@ static void log_mel_spectrogram_worker_thread(int ith, const std::vector<float> 
     }
 }
 
-// ref: https://github.com/openai/paraformer/blob/main/paraformer/audio.py#L110-L157
-static bool log_mel_spectrogram(
-        paraformer_state & wstate,
-        const float * samples,
-        const int   n_samples,
-        const int   /*sample_rate*/,
-        const int   frame_size,
-        const int   frame_step,
-        const int   n_mel,
-        const int   n_threads,
-        const paraformer_filters & filters,
-        const bool   debug,
-        paraformer_mel & mel) {
-    const int64_t t_start_us = ggml_time_us();
+// ref: https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp#L2833C24-L2833C24
+bool fbank_lfr_cmvn_feature(const float *samples, const int n_samples, const int frame_size, const int frame_step,
+                            const int n_mel, const int n_threads, paraformer_filters &filters, const bool debug,
+                            paraformer_mel &mel) {
+    //    const int64_t t_start_us = ggml_time_us();
 
     // Hanning window (Use cosf to eliminate difference)
     // ref: https://pytorch.org/docs/stable/generated/torch.hann_window.html
-    // ref: https://github.com/openai/paraformer/blob/main/paraformer/audio.py#L147
+    // ref: https://github.com/openai/whisper/blob/main/paraformer/audio.py#L147
     std::vector<float> hann;
     hann_window(frame_size, true, hann);
-
 
     // Calculate the length of padding
     int64_t stage_1_pad = PARAFORMER_SAMPLE_RATE * 30;
@@ -213,31 +204,31 @@ static bool log_mel_spectrogram(
     std::copy(samples, samples + n_samples, samples_padded.begin() + stage_2_pad);
 
     // pad 30 seconds of zeros at the end of audio (480,000 samples) + reflective pad 200 samples at the end of audio
-    std::fill(samples_padded.begin() + n_samples + stage_2_pad, samples_padded.begin() + n_samples + stage_1_pad + 2 * stage_2_pad, 0);
+    std::fill(samples_padded.begin() + n_samples + stage_2_pad,
+              samples_padded.begin() + n_samples + stage_1_pad + 2 * stage_2_pad, 0);
 
     // reflective pad 200 samples at the beginning of audio
     std::reverse_copy(samples + 1, samples + 1 + stage_2_pad, samples_padded.begin());
 
-    mel.n_mel     = n_mel;
+    mel.n_mel = n_mel;
     // https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/SpectralOps.cpp#L936
     // Calculate number of frames + remove the last frame
-    mel.n_len     = (samples_padded.size() - frame_size) / frame_step;
+    mel.n_len = (samples_padded.size() - frame_size) / frame_step;
     // Calculate semi-padded sample length to ensure compatibility
     mel.n_len_org = 1 + (n_samples + stage_2_pad - frame_size) / frame_step;
     mel.data.resize(mel.n_mel * mel.n_len);
 
-
     {
         std::vector<std::thread> workers(n_threads - 1);
         for (int iw = 0; iw < n_threads - 1; ++iw) {
-            workers[iw] = std::thread(
-                    log_mel_spectrogram_worker_thread, iw + 1, std::cref(hann), samples_padded,
-                    n_samples + stage_2_pad, frame_size, frame_step, n_threads,
-                    std::cref(filters), std::ref(mel));
+            workers[iw] = std::thread(fbank_lfr_cmvn_feature_worker_thread, iw + 1, std::cref(hann), samples_padded,
+                                      n_samples + stage_2_pad, frame_size, frame_step, n_threads, std::cref(filters),
+                                      std::ref(mel));
         }
 
         // main thread
-        log_mel_spectrogram_worker_thread(0, hann, samples_padded, n_samples + stage_2_pad, frame_size, frame_step, n_threads, filters, mel);
+        fbank_lfr_cmvn_feature_worker_thread(0, hann, samples_padded, n_samples + stage_2_pad, frame_size, frame_step,
+                                             n_threads, filters, mel);
 
         for (int iw = 0; iw < n_threads - 1; ++iw) {
             workers[iw].join();
@@ -246,7 +237,7 @@ static bool log_mel_spectrogram(
 
     // clamping and normalization
     double mmax = -1e20;
-    for (int i = 0; i < mel.n_mel*mel.n_len; i++) {
+    for (int i = 0; i < mel.n_mel * mel.n_len; i++) {
         if (mel.data[i] > mmax) {
             mmax = mel.data[i];
         }
@@ -254,19 +245,19 @@ static bool log_mel_spectrogram(
 
     mmax -= 8.0;
 
-    for (int i = 0; i < mel.n_mel*mel.n_len; i++) {
+    for (int i = 0; i < mel.n_mel * mel.n_len; i++) {
         if (mel.data[i] < mmax) {
             mel.data[i] = mmax;
         }
 
-        mel.data[i] = (mel.data[i] + 4.0)/4.0;
+        mel.data[i] = (mel.data[i] + 4.0) / 4.0;
     }
 
-    wstate.t_mel_us += ggml_time_us() - t_start_us;
+    //    wstate.t_mel_us += ggml_time_us() - t_start_us;
 
-    // Dump log_mel_spectrogram
+    // Dump fbank_lfr_cmvn_feature
     if (debug) {
-        std::ofstream outFile("log_mel_spectrogram.json");
+        std::ofstream outFile("fbank_lfr_cmvn_feature.json");
         outFile << "[";
         for (uint64_t i = 0; i < mel.data.size() - 1; i++) {
             outFile << mel.data[i] << ", ";
