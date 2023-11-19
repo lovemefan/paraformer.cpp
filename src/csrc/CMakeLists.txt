@@ -10,9 +10,11 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Wall")
 
 set(SOURCE_FILES
-        paraformer-contextual-offline.h
         paraformer-contextual-offline.cpp
+        paraformer-frontend.cpp
         )
+
+option(PARAFORMER_BUILD_TESTS "paraformer: build tests" ON)
 
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -21,9 +23,12 @@ endif ()
 
 include_directories(${PROJECT_SOURCE_DIR}/third-party/ggml/include/ggml ${PROJECT_SOURCE_DIR}/third-party/ggml/src)
 add_subdirectory(third-party/ggml)
+add_library(paraformer-core STATIC ${SOURCE_FILES})
 
-add_library(paraformer-contextual-offline STATIC paraformer-contextual-offline.cpp)
+if (PARAFORMER_BUILD_TESTS)
+    message(DEBUG "Test scripts")
+    add_subdirectory(test)
+endif ()
 
-add_executable(model_test test/model_load_test.cpp)
-target_link_libraries(paraformer-contextual-offline PRIVATE ggml)
-target_link_libraries(model_test PRIVATE paraformer-contextual-offline)
+target_link_libraries(paraformer-core PRIVATE ggml)
+
