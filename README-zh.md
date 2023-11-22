@@ -32,5 +32,7 @@ python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-larg
 1. 本项目借用并模仿来自[whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)
    的大部分c++代码
 2. 参考来自funasr的paraformer模型结构以及前向计算 [FunASR](https://github.com/alibaba-damo-academy/FunASR)
-   
+3. 本项目参考并借用 [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank)中的fbank特征提取算法。
+   [FunASR](https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L337C22-L372)
+   中的lrf + cmvn 算法 
 

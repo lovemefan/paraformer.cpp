@@ -34,3 +34,8 @@ python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-larg
    from [whisper.cpp](https://github.com/ggerganov/ggml/blob/master/examples/whisper/whisper.cpp)
 
 2. we referenced model structure and forward detail from [FunASR](https://github.com/alibaba-damo-academy/FunASR)
+
+3. we borrowed fbank feature extract algorithm code
+   from [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank)
+   and lrf + cmvn algorithm code
+   from[funasr](https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L337C22-L372)
