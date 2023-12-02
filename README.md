@@ -13,6 +13,7 @@ with [ggml](https://github.com/ggerganov/ggml/)
     - [ ] predictor
     - [ ] decoder
     - [ ] bias encoder
+- [ ] fbank + lfr + cmvn feature extraction
 
 ## usage
 

@@ -1139,7 +1139,7 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx, par
 
     cur = ggml_add(ctx0, cur, position);
 
-    for (int il = 0; il < hparams.n_encoder_hidden_state; ++il) {
+    for (int il = 0; il < n_layer; ++il) {
         const auto &layer = model.encoder.encoder_layer[il];
 
         // norm1
@@ -1169,17 +1169,17 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx, par
             struct ggml_tensor *K;
             struct ggml_tensor *V;
 
-            Q = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 0 * cur->nb[2], sizeof(pctx.wtype));
+            Q = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 0 * cur->nb[2]);
             Q = ggml_reshape_4d(ctx0, Q, n_state / n_head, n_head, n_ctx, 1);
             Q = ggml_cont(ctx0, ggml_permute(ctx0, Q, 0, 2, 1, 3));
             Q = ggml_reshape_3d(ctx0, Q, n_state, n_ctx, n_head);
 
-            K = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 1 * cur->nb[2], sizeof(pctx.wtype));
+            K = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 1 * cur->nb[2]);
             K = ggml_reshape_4d(ctx0, K, n_state / n_head, n_head, n_ctx, 1);
             K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
             K = ggml_reshape_3d(ctx0, K, n_state, n_ctx, n_head);
 
-            V = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 2 * cur->nb[2], sizeof(pctx.wtype));
+            V = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 2 * cur->nb[2]);
             V = ggml_reshape_4d(ctx0, V, n_state / n_head, n_head, n_ctx, 1);
             V = ggml_cont(ctx0, ggml_permute(ctx0, V, 1, 2, 0, 3));  // transposed
             V = ggml_reshape_3d(ctx0, V, n_state, n_ctx, n_head);
