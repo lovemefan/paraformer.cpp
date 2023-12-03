@@ -144,6 +144,44 @@ static bool hamming_window(int length, bool periodic, std::vector<float> &output
     return true;
 }
 
+void load_cmvn(const char *filename, std::vector<float> &means_list, std::vector<float> &vars_list) {
+    std::ifstream cmvn_stream(filename);
+    if (!cmvn_stream.is_open()) {
+        std::cout << "Failed to open file: " << filename;
+        exit(-1);
+    }
+    std::string line;
+
+    while (getline(cmvn_stream, line)) {
+        std::istringstream iss(line);
+        std::vector<std::string> line_item{std::istream_iterator<std::string>{iss},
+                                           std::istream_iterator<std::string>{}};
+        if (line_item[0] == "<AddShift>") {
+            getline(cmvn_stream, line);
+            std::istringstream means_lines_stream(line);
+            std::vector<std::string> means_lines{std::istream_iterator<std::string>{means_lines_stream},
+                                                 std::istream_iterator<std::string>{}};
+            if (means_lines[0] == "<LearnRateCoef>") {
+                for (int j = 3; j < means_lines.size() - 1; j++) {
+                    means_list.push_back(stof(means_lines[j]));
+                }
+                continue;
+            }
+        } else if (line_item[0] == "<Rescale>") {
+            getline(cmvn_stream, line);
+            std::istringstream vars_lines_stream(line);
+            std::vector<std::string> vars_lines{std::istream_iterator<std::string>{vars_lines_stream},
+                                                std::istream_iterator<std::string>{}};
+            if (vars_lines[0] == "<LearnRateCoef>") {
+                for (int j = 3; j < vars_lines.size() - 1; j++) {
+                    vars_list.push_back(stof(vars_lines[j]));
+                }
+                continue;
+            }
+        }
+    }
+}
+
 static inline float inverse_mel_scale(float mel_freq) { return 700.0f * (expf(mel_freq / 1127.0f) - 1.0f); }
 
 static inline float mel_scale(float freq) { return 1127.0f * logf(1.0f + freq / 700.0f); }
@@ -259,7 +297,7 @@ static void fbank_feature_worker_thread(int ith, const std::vector<float> &hammi
 
 bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_samples, const int frame_size,
                             const int frame_step, const int n_mel, const int n_threads, const bool debug,
-                            paraformer_mel &mel) {
+                            const std::vector<float> &cmvn_means, std::vector<float> &cmvn_vars, paraformer_mel &mel) {
     //    const int64_t t_start_us = ggml_time_us();
 
     const int32_t n_frames_per_ms = PARAFORMER_SAMPLE_RATE * 0.001f;
@@ -318,9 +356,59 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
         outFile.close();
     }
 
-    // todo  apply lrf, merge lfr_m frames as one,lfr_n frames per window
-    // ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L409-L440
+    std::vector<std::vector<float>> out_feats;
 
-    // todo apply cvmn
+    // tapply lrf, merge lfr_m frames as one,lfr_n frames per window
+    // ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L409-L440
+    int T = mel.n_len;
+    int lfr_m = mel.lfr_m;  // 7
+    int lfr_n = mel.lfr_n;  // 6
+    int T_lrf = ceil(1.0 * T / mel.lfr_n);
+    int left_pad = (mel.lfr_m - 1) / 2;
+    int left_pad_offset = (lfr_m - left_pad) * mel.n_mel;
+    // Merge lfr_m frames as one,lfr_n frames per window
+    T = T + (lfr_m - 1) / 2;
+    std::vector<float> p;
+    for (int i = 0; i < T_lrf; i++) {
+        // the first frames need left padding
+        if (i == 0) {
+            // left padding
+            for (int j = 0; j < left_pad; j++) {
+                p.insert(p.end(), mel.data.begin(), mel.data.begin() + mel.n_mel);
+            }
+            p.insert(p.end(), mel.data.begin(), mel.data.begin() + left_pad_offset);
+            out_feats.emplace_back(p);
+            p.clear();
+        } else {
+            if (lfr_m <= T - i * lfr_n) {
+                for (int j = 0; j < lfr_m; j++) {
+                    p.insert(p.end(), mel.data.begin() + (i * lfr_n + j) * mel.n_mel + left_pad_offset,
+                             mel.data.begin() + (i * lfr_n + j + 1) * mel.n_mel + left_pad_offset);
+                }
+                out_feats.emplace_back(p);
+                p.clear();
+            } else {
+                // Fill to lfr_m frames at last window if less than lfr_m frames  (copy last frame)
+                int num_padding = lfr_m - (T - i * lfr_n);
+                for (int j = 0; j < (mel.n_len - i * lfr_n); j++) {
+                    p.insert(p.end(), mel.data.begin() + (i * lfr_n + j) * mel.n_mel + left_pad_offset,
+                             mel.data.begin() + (i * lfr_n + j + 1) * mel.n_mel + left_pad_offset);
+                }
+                for (int j = 0; j < num_padding; j++) {
+                    p.insert(p.end(), mel.data.begin() + (mel.n_len - 1) * mel.n_mel + left_pad_offset,
+                             mel.data.begin() + mel.n_len * mel.n_mel + left_pad_offset);
+                }
+                out_feats.emplace_back(p);
+                p.clear();
+            }
+        }
+    }
+
+    // apply cvmn
+    for (auto &out_feat : out_feats) {
+        for (int j = 0; j < cmvn_means.size(); j++) {
+            out_feat[j] = (out_feat[j] + cmvn_means[j]) * cmvn_vars[j];
+        }
+    }
     return true;
 }
