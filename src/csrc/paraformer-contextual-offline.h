@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "ggml-alloc.h"
 #ifdef GGML_USE_CUBLAS

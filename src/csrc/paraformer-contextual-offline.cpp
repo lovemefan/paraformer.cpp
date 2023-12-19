@@ -4,9 +4,11 @@
 
 #include "paraformer-contextual-offline.h"
 
+#include <assert.h>
 #include <math.h>
 
 #include <fstream>
+#include <functional>
 #if defined(_MSC_VER)
 #pragma warning(disable : 4244 4267)  // possible loss of data
 #endif
