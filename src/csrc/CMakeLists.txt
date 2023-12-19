@@ -12,7 +12,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Wall")
 set(SOURCE_FILES
         paraformer-contextual-offline.cpp
         paraformer-frontend.cpp
-        )
+        fftsg.cpp
+)
 
 option(PARAFORMER_BUILD_TESTS "paraformer: build tests" ON)
 
