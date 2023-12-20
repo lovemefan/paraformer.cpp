@@ -98,7 +98,8 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
     const int padded_window_size = round_to_nearest_power_two(frame_size);
     window.resize(padded_window_size);
     // calculate FFT only when fft_in are not all zero
-    for (; i < std::min(n_samples / frame_step + 1, mel.n_len); i += n_threads) {
+    int n_fft = std::min(n_samples / frame_step + 1, mel.n_len);
+    for (; i < n_fft; i += n_threads) {
         const int offset = i * frame_step;
 
         std::copy(samples.begin() + offset, samples.begin() + offset + frame_size, window.begin());
@@ -169,11 +170,13 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
                     auto mel_num = mel_scale(fft_bin_width * k);
                     auto up_slope = (mel_num - left_mel) / (center_mel - left_mel);
                     auto down_slope = (right_mel - mel_num) / (right_mel - center_mel);
-                    auto filter = std::max(0.0f, std::min(up_slope, down_slope));
+                    // max(0.0, min(up_slope, down_slope))
+                    auto filter = up_slope < down_slope ? up_slope : down_slope;
+                    filter = filter > 0.0f ? filter : 0.0f;
                     sum += window[k] * filter;
                 }
 
-                sum = log(std::max(sum, 1e-10));
+                sum = log(sum > 1e-10 ? sum : 1e-10);
 
                 mel.data[j * mel.n_len + i] = sum;
             }
