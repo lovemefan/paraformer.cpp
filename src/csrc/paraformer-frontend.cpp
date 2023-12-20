@@ -3,119 +3,21 @@
 //
 
 #include "paraformer-frontend.h"
-#define SIN_COS_N_COUNT 80
 
-static float sin_vals[SIN_COS_N_COUNT];
-static float cos_vals[SIN_COS_N_COUNT];
-
+#include <cassert>
 #define M_2PI 6.283185307179586476925286766559005
+#define SIN_COS_N_COUNT 512
 
 // In FFT, we frequently use sine and cosine operations with the same values.
 // We can use precalculated values to speed up the process.
-void fill_sin_cos_table() {
-    static bool is_filled = false;
-    if (is_filled) return;
-    for (int i = 0; i < SIN_COS_N_COUNT; i++) {
-        double theta = (2 * M_PI * i) / SIN_COS_N_COUNT;
-        sin_vals[i] = sinf(theta);
-        cos_vals[i] = cosf(theta);
-    }
-    is_filled = true;
-}
+std::vector<int32_t> ip_(2 + std::sqrt(SIN_COS_N_COUNT / 2));
+std::vector<double> w_(SIN_COS_N_COUNT / 2);
 
-static void pre_emphasize(float *d, int32_t n, float pre_emph_coeff) {
-    if (pre_emph_coeff == 0.0) {
-        return;
-    }
-
-    assert(pre_emph_coeff >= 0.0 && pre_emph_coeff <= 1.0);
-
-    for (int32_t i = n - 1; i > 0; --i) {
-        d[i] -= pre_emph_coeff * d[i - 1];
-    }
-    d[0] -= pre_emph_coeff * d[0];
-}
-
-// naive Discrete Fourier Transform
-// input is real-valued
-// output is complex-valued
-static void dft(const std::vector<float> &in, std::vector<float> &out) {
-    int N = in.size();
-
-    out.resize(N * 2);
-    const int sin_cos_step = SIN_COS_N_COUNT / N;
-
-    for (int k = 0; k < N; k++) {
-        float re = 0;
-        float im = 0;
-
-        for (int n = 0; n < N; n++) {
-            int idx = (k * n * sin_cos_step) % (SIN_COS_N_COUNT);  // t = 2*M_PI*k*n/N
-            re += in[n] * cos_vals[idx];                           // cos(t)
-            im -= in[n] * sin_vals[idx];                           // sin(t)
-        }
-
-        out[k * 2 + 0] = re;
-        out[k * 2 + 1] = im;
-    }
-}
-
-// Cooley-Tukey FFT
-// poor man's implementation - use something better
-// input is real-valued
-// output is complex-valued
-// ref: // https://github.com/ggerganov/whisper.cpp/blob/master/whisper.cpp#L2373C1-L2429C1
-static void fft(const std::vector<float> &in, std::vector<float> &out) {
-    out.resize(in.size() * 2);
-
-    int N = in.size();
-
-    if (N == 1) {
-        out[0] = in[0];
-        out[1] = 0;
-        return;
-    }
-
-    if (N % 2 == 1) {
-        dft(in, out);
-        return;
-    }
-
-    std::vector<float> even;
-    std::vector<float> odd;
-
-    even.reserve(N / 2);
-    odd.reserve(N / 2);
-
-    for (int i = 0; i < N; i++) {
-        if (i % 2 == 0) {
-            even.push_back(in[i]);
-        } else {
-            odd.push_back(in[i]);
-        }
-    }
-
-    std::vector<float> even_fft;
-    std::vector<float> odd_fft;
-
-    fft(even, even_fft);
-    fft(odd, odd_fft);
-
-    const int sin_cos_step = SIN_COS_N_COUNT / N;
-    for (int k = 0; k < N / 2; k++) {
-        int idx = k * sin_cos_step;  // t = 2*M_PI*k/N
-        float re = cos_vals[idx];    // cos(t)
-        float im = -sin_vals[idx];   // sin(t)
-
-        float re_odd = odd_fft[2 * k + 0];
-        float im_odd = odd_fft[2 * k + 1];
-
-        out[2 * k + 0] = even_fft[2 * k + 0] + re * re_odd - im * im_odd;
-        out[2 * k + 1] = even_fft[2 * k + 1] + re * im_odd + im * re_odd;
-
-        out[2 * (k + N / 2) + 0] = even_fft[2 * k + 0] - re * re_odd + im * im_odd;
-        out[2 * (k + N / 2) + 1] = even_fft[2 * k + 1] - re * im_odd - im * re_odd;
-    }
+// see fftsg.cc
+void rdft(int n, int isgn, double *a, int *ip, double *w);
+static void rfft(const std::vector<double> &in) {
+    int32_t n = in.size();
+    rdft(n, 1, (double *)in.data(), ip_.data(), w_.data());
 }
 
 inline int32_t round_to_nearest_power_two(int32_t n) {
@@ -129,7 +31,7 @@ inline int32_t round_to_nearest_power_two(int32_t n) {
     return n + 1;
 }
 
-static bool hamming_window(int length, bool periodic, std::vector<float> &output) {
+static bool hamming_window(int length, bool periodic, std::vector<double> &output) {
     if (output.size() < static_cast<size_t>(length)) {
         output.resize(length);
     }
@@ -144,7 +46,7 @@ static bool hamming_window(int length, bool periodic, std::vector<float> &output
     return true;
 }
 
-void load_cmvn(const char *filename, std::vector<float> &means_list, std::vector<float> &vars_list) {
+void load_cmvn(const char *filename, paraformer_cmvn &cmvn) {
     std::ifstream cmvn_stream(filename);
     if (!cmvn_stream.is_open()) {
         std::cout << "Failed to open file: " << filename;
@@ -163,7 +65,7 @@ void load_cmvn(const char *filename, std::vector<float> &means_list, std::vector
                                                  std::istream_iterator<std::string>{}};
             if (means_lines[0] == "<LearnRateCoef>") {
                 for (int j = 3; j < means_lines.size() - 1; j++) {
-                    means_list.push_back(stof(means_lines[j]));
+                    cmvn.cmvn_means.push_back(stof(means_lines[j]));
                 }
                 continue;
             }
@@ -174,7 +76,7 @@ void load_cmvn(const char *filename, std::vector<float> &means_list, std::vector
                                                 std::istream_iterator<std::string>{}};
             if (vars_lines[0] == "<LearnRateCoef>") {
                 for (int j = 3; j < vars_lines.size() - 1; j++) {
-                    vars_list.push_back(stof(vars_lines[j]));
+                    cmvn.cmvn_vars.push_back(stof(vars_lines[j]));
                 }
                 continue;
             }
@@ -186,18 +88,16 @@ static inline float inverse_mel_scale(float mel_freq) { return 700.0f * (expf(me
 
 static inline float mel_scale(float freq) { return 1127.0f * logf(1.0f + freq / 700.0f); }
 
-static void fbank_feature_worker_thread(int ith, const std::vector<float> &hamming, const std::vector<float> &samples,
+static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamming, const std::vector<double> &samples,
                                         int n_samples, int frame_size, int frame_step, int n_threads,
                                         paraformer_mel &mel) {
-    std::vector<float> fft_out(2 * frame_step);
     // make sure n_fft == 1 + (PARAFORMER_N_FFT / 2), bin_0 to bin_nyquist
     int n_fft = 1 + (frame_size / 2);
     int i = ith;
 
-    std::vector<float> window;
+    std::vector<double> window;
     const int padded_window_size = round_to_nearest_power_two(frame_size);
     window.resize(padded_window_size);
-
     // calculate FFT only when fft_in are not all zero
     for (; i < std::min(n_samples / frame_step + 1, mel.n_len); i += n_threads) {
         const int offset = i * frame_step;
@@ -230,18 +130,14 @@ static void fbank_feature_worker_thread(int ith, const std::vector<float> &hammi
             }
         }
 
-        // pad columns with zero
-        if (padded_window_size - frame_size > 0) {
-            std::fill(window.begin() + (padded_window_size - frame_size), window.end(), 0.0);
-        }
-
         // FFT
-        fft(window, fft_out);
+        // window is input and output
+        rfft(window);
 
         // Calculate modulus^2 of complex numbers，Power Spectrum
         // Use pow(fft_out[2 * j + 0], 2) + pow(fft_out[2 * j + 1], 2) causes inference quality problem? Interesting.
         for (int j = 0; j < padded_window_size; j++) {
-            fft_out[j] = (fft_out[2 * j + 0] * fft_out[2 * j + 0] + fft_out[2 * j + 1] * fft_out[2 * j + 1]);
+            window[j] = (window[2 * j + 0] * window[2 * j + 0] + window[2 * j + 1] * window[2 * j + 1]);
         }
 
         // log-Mel filter bank energies aka: "fbank"
@@ -276,10 +172,10 @@ static void fbank_feature_worker_thread(int ith, const std::vector<float> &hammi
                     auto up_slope = (mel_num - left_mel) / (center_mel - left_mel);
                     auto down_slope = (right_mel - mel_num) / (right_mel - center_mel);
                     auto filter = std::max(0.0f, std::min(up_slope, down_slope));
-                    sum += fft_out[k] * filter;
+                    sum += window[k] * filter;
                 }
 
-                sum = log10(std::max(sum, 1e-10));
+                sum = log(std::max(sum, 1e-10));
 
                 mel.data[j * mel.n_len + i] = sum;
             }
@@ -287,7 +183,7 @@ static void fbank_feature_worker_thread(int ith, const std::vector<float> &hammi
     }
 
     // Otherwise fft_out are all zero
-    double sum = log10(1e-10);
+    double sum = log(1e-10);
     for (; i < mel.n_len; i += n_threads) {
         for (int j = 0; j < mel.n_mel; j++) {
             mel.data[j * mel.n_len + i] = sum;
@@ -295,9 +191,9 @@ static void fbank_feature_worker_thread(int ith, const std::vector<float> &hammi
     }
 }
 
-bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_samples, const int frame_size,
+bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samples, const int frame_size,
                             const int frame_step, const int n_mel, const int n_threads, const bool debug,
-                            const std::vector<float> &cmvn_means, std::vector<float> &cmvn_vars, paraformer_mel &mel) {
+                            paraformer_cmvn &cmvn, paraformer_mel &mel) {
     //    const int64_t t_start_us = ggml_time_us();
 
     const int32_t n_frames_per_ms = PARAFORMER_SAMPLE_RATE * 0.001f;
@@ -305,8 +201,8 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
     mel.n_len = 1 + ((n_samples - frame_size * n_frames_per_ms) / (frame_step * n_frames_per_ms));
     mel.data.resize(mel.n_mel * mel.n_len);
 
-    std::vector<float> hamming;
-    hamming_window(frame_size, true, hamming);
+    std::vector<double> hamming;
+    hamming_window(frame_size * n_frames_per_ms, true, hamming);
 
     {
         std::vector<std::thread> workers(n_threads - 1);
@@ -325,27 +221,19 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
         }
     }
 
-    // clamping and normalization
-    double mmax = -1e20;
-    for (int i = 0; i < mel.n_mel * mel.n_len; i++) {
-        if (mel.data[i] > mmax) {
-            mmax = mel.data[i];
+    {
+        // reverse the mel
+        double _tmp[mel.data.size()];
+        for (int i = 0; i < mel.n_mel; i++) {
+            for (int j = 0; j < mel.n_len; j++) {
+                _tmp[j * mel.n_mel + i] = mel.data[i * mel.n_len + j];
+            }
+        }
+        for (int i = 0; i < mel.data.size(); i++) {
+            mel.data[i] = _tmp[i];
         }
     }
 
-    mmax -= 8.0;
-
-    for (int i = 0; i < mel.n_mel * mel.n_len; i++) {
-        if (mel.data[i] < mmax) {
-            mel.data[i] = mmax;
-        }
-
-        mel.data[i] = (mel.data[i] + 4.0) / 4.0;
-    }
-
-    //    wstate.t_mel_us += ggml_time_us() - t_start_us;
-
-    // Dump fbank_lfr_cmvn_feature
     if (debug) {
         std::ofstream outFile("fbank_lfr_cmvn_feature.json");
         outFile << "[";
@@ -356,7 +244,7 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
         outFile.close();
     }
 
-    std::vector<std::vector<float>> out_feats;
+    std::vector<std::vector<double>> out_feats;
 
     // tapply lrf, merge lfr_m frames as one,lfr_n frames per window
     // ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L409-L440
@@ -368,7 +256,7 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
     int left_pad_offset = (lfr_m - left_pad) * mel.n_mel;
     // Merge lfr_m frames as one,lfr_n frames per window
     T = T + (lfr_m - 1) / 2;
-    std::vector<float> p;
+    std::vector<double> p;
     for (int i = 0; i < T_lrf; i++) {
         // the first frames need left padding
         if (i == 0) {
@@ -381,22 +269,18 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
             p.clear();
         } else {
             if (lfr_m <= T - i * lfr_n) {
-                for (int j = 0; j < lfr_m; j++) {
-                    p.insert(p.end(), mel.data.begin() + (i * lfr_n + j) * mel.n_mel + left_pad_offset,
-                             mel.data.begin() + (i * lfr_n + j + 1) * mel.n_mel + left_pad_offset);
-                }
+                p.insert(p.end(), mel.data.begin() + (i * lfr_n - left_pad) * mel.n_mel,
+                         mel.data.begin() + (i * lfr_n - left_pad + lfr_m) * mel.n_mel);
                 out_feats.emplace_back(p);
                 p.clear();
             } else {
                 // Fill to lfr_m frames at last window if less than lfr_m frames  (copy last frame)
                 int num_padding = lfr_m - (T - i * lfr_n);
                 for (int j = 0; j < (mel.n_len - i * lfr_n); j++) {
-                    p.insert(p.end(), mel.data.begin() + (i * lfr_n + j) * mel.n_mel + left_pad_offset,
-                             mel.data.begin() + (i * lfr_n + j + 1) * mel.n_mel + left_pad_offset);
+                    p.insert(p.end(), mel.data.begin() + (i * lfr_n - left_pad) * mel.n_mel, mel.data.end());
                 }
                 for (int j = 0; j < num_padding; j++) {
-                    p.insert(p.end(), mel.data.begin() + (mel.n_len - 1) * mel.n_mel + left_pad_offset,
-                             mel.data.begin() + mel.n_len * mel.n_mel + left_pad_offset);
+                    p.insert(p.end(), mel.data.end() - mel.n_mel, mel.data.end());
                 }
                 out_feats.emplace_back(p);
                 p.clear();
@@ -406,9 +290,55 @@ bool fbank_lfr_cmvn_feature(const std::vector<float> &samples, const int n_sampl
 
     // apply cvmn
     for (auto &out_feat : out_feats) {
-        for (int j = 0; j < cmvn_means.size(); j++) {
-            out_feat[j] = (out_feat[j] + cmvn_means[j]) * cmvn_vars[j];
+        for (int j = 0; j < cmvn.cmvn_means.size(); j++) {
+            out_feat[j] = (out_feat[j] + cmvn.cmvn_means[j]) * cmvn.cmvn_vars[j];
         }
     }
+
     return true;
+}
+
+bool load_wav_file(const char *filename, int32_t *sampling_rate, std::vector<double> &data) {
+    struct WaveHeader header {};
+
+    std::ifstream is(filename, std::ifstream::binary);
+    is.read(reinterpret_cast<char *>(&header), sizeof(header));
+    if (!is) {
+        std::cout << "Failed to read " << filename;
+        return false;
+    }
+
+    if (!header.Validate()) {
+        return false;
+    }
+
+    header.SeekToDataChunk(is);
+    if (!is) {
+        return false;
+    }
+
+    *sampling_rate = header.sample_rate;
+    // header.subchunk2_size contains the number of bytes in the data.
+    // As we assume each sample contains two bytes, so it is divided by 2 here
+    auto speech_len = header.subchunk2_size / 2;
+    data.resize(speech_len);
+
+    auto speech_buff = (int16_t *)malloc(sizeof(int16_t) * speech_len);
+
+    if (speech_buff) {
+        memset(speech_buff, 0, sizeof(int16_t) * speech_len);
+        is.read(reinterpret_cast<char *>(speech_buff), header.subchunk2_size);
+        if (!is) {
+            std::cout << "Failed to read " << filename;
+            return false;
+        }
+
+        //        float scale = 32768;
+        float scale = 1;
+        for (int32_t i = 0; i != speech_len; ++i) {
+            data[i] = (double)speech_buff[i] / scale;
+        }
+        return true;
+    } else
+        return false;
 }
