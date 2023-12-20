@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdarg.h>
 
 #include <fstream>
 #include <functional>

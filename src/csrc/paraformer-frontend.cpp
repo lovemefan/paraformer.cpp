@@ -92,7 +92,6 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
                                         int n_samples, int frame_size, int frame_step, int n_threads,
                                         paraformer_mel &mel) {
     // make sure n_fft == 1 + (PARAFORMER_N_FFT / 2), bin_0 to bin_nyquist
-    int n_fft = 1 + (frame_size / 2);
     int i = ith;
 
     std::vector<double> window;
@@ -147,7 +146,6 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
             auto low_freq = mel.low_freq;
             auto high_freq = mel.high_freq;
             auto vtln_high = mel.vtln_high;
-            auto vtln_low = mel.vtln_low;
 
             if (high_freq <= 0) high_freq += nyquist;
 

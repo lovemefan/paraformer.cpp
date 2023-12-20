@@ -2,13 +2,13 @@
 // Created by lovemefan on 2023/10/3.
 //
 #pragma once
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <sstream>
 #include <thread>
 #include <vector>
-
 #define PARAFORMER_SAMPLE_RATE 16000
 #define PREEMPH_COEFF 0.97
 struct paraformer_mel {
@@ -105,7 +105,6 @@ struct WaveHeader {
     int32_t subchunk2_size;  // size of subchunk2
 };
 
-void fill_sin_cos_table();
 void load_cmvn(const char *filename, paraformer_cmvn &cmvn);
 bool load_wav_file(const char *filename, int32_t *sampling_rate, std::vector<double> &data);
 bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samples, const int frame_size,
