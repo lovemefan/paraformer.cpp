@@ -16,8 +16,8 @@ struct paraformer_mel {
     int n_len;
     int n_len_org;
     int n_mel;
-    float low_freq = 20.0f;
-    float high_freq = 0.0f;
+    float mel_low_freq = 31.748642f;
+    float mel_high_freq = 2840.03784f;
     float vtln_high = -500.0f;
     float vtln_low = 100.0f;
     int lfr_n = 6;
