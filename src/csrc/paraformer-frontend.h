@@ -10,6 +10,7 @@
 #include <sstream>
 #include <thread>
 #include <vector>
+
 #define PARAFORMER_SAMPLE_RATE 16000
 #define PREEMPH_COEFF 0.97
 struct paraformer_mel {

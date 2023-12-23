@@ -5,6 +5,9 @@
 #include "paraformer-frontend.h"
 
 #include <cassert>
+
+#include "log-mel-filter-bank.h"
+
 #define M_2PI 6.283185307179586476925286766559005
 #define SIN_COS_N_COUNT 512
 
@@ -84,10 +87,6 @@ void load_cmvn(const char *filename, paraformer_cmvn &cmvn) {
     }
 }
 
-static inline float inverse_mel_scale(float mel_freq) { return 700.0f * (expf(mel_freq / 1127.0f) - 1.0f); }
-
-static inline float mel_scale(float freq) { return 1127.0f * logf(1.0f + freq / 700.0f); }
-
 static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamming, const std::vector<double> &samples,
                                         int n_samples, int frame_size, int frame_step, int n_threads,
                                         paraformer_mel &mel) {
@@ -143,36 +142,11 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
         // log-Mel filter bank energies aka: "fbank"
         {
             auto num_fft_bins = padded_window_size / 2;
-            auto nyquist = 0.5 * PARAFORMER_SAMPLE_RATE;
-            auto low_freq = mel.low_freq;
-            auto high_freq = mel.high_freq;
-            auto vtln_high = mel.vtln_high;
-
-            if (high_freq <= 0) high_freq += nyquist;
-
-            // fft-bin width [think of it as Nyquist-freq / half-window-length]
-            float fft_bin_width = PARAFORMER_SAMPLE_RATE * 1.0 / padded_window_size;
-            float mel_low_freq = mel_scale(low_freq);
-            float mel_high_freq = mel_scale(high_freq);
-
-            // divide by num_bins+1 in next line because of end-effects where the bins
-            // spread out to the sides.
-            auto mel_freq_delta = (mel_high_freq - mel_low_freq) / (mel.n_mel + 1);
-            if (vtln_high < 0.0f) vtln_high += nyquist;
-
-            for (int j = 0; j < mel.n_mel; j++) {
+            int n_mel = mel.n_mel;
+            for (int j = 0; j < n_mel; j++) {
                 double sum = 0.0;
-                float left_mel = mel_low_freq + j * mel_freq_delta;
-                float center_mel = mel_low_freq + (j + 1.0) * mel_freq_delta;
-                float right_mel = mel_low_freq + (j + 2.0) * mel_freq_delta;
-
                 for (int k = 0; k < num_fft_bins; k++) {
-                    auto mel_num = mel_scale(fft_bin_width * k);
-                    auto up_slope = (mel_num - left_mel) / (center_mel - left_mel);
-                    auto down_slope = (right_mel - mel_num) / (right_mel - center_mel);
-                    // max(0.0, min(up_slope, down_slope))
-                    auto filter = up_slope < down_slope ? up_slope : down_slope;
-                    filter = filter > 0.0f ? filter : 0.0f;
+                    auto filter = LogMelFilterMelArray[j * n_mel + k];
                     sum += window[k] * filter;
                 }
 
@@ -235,15 +209,15 @@ bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samp
         }
     }
 
-    if (debug) {
-        std::ofstream outFile("fbank_lfr_cmvn_feature.json");
-        outFile << "[";
-        for (uint64_t i = 0; i < mel.data.size() - 1; i++) {
-            outFile << mel.data[i] << ", ";
-        }
-        outFile << mel.data[mel.data.size() - 1] << "]";
-        outFile.close();
-    }
+    //    if (debug) {
+    //        std::ofstream outFile("fbank_lfr_cmvn_feature.json");
+    //        outFile << "[";
+    //        for (uint64_t i = 0; i < mel.data.size() - 1; i++) {
+    //            outFile << mel.data[i] << ", ";
+    //        }
+    //        outFile << mel.data[mel.data.size() - 1] << "]";
+    //        outFile.close();
+    //    }
 
     std::vector<std::vector<double>> out_feats;
 
