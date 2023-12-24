@@ -146,22 +146,13 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
             for (int j = 0; j < n_mel; j++) {
                 double sum = 0.0;
                 for (int k = 0; k < num_fft_bins; k++) {
-                    auto filter = LogMelFilterMelArray[j * n_mel + k];
-                    sum += window[k] * filter;
+                    sum += window[k] * LogMelFilterMelArray[j * num_fft_bins + k];
                 }
 
                 sum = log(sum > 1e-10 ? sum : 1e-10);
 
-                mel.data[j * mel.n_len + i] = sum;
+                mel.data[i * n_mel + j] = sum;
             }
-        }
-    }
-
-    // Otherwise fft_out are all zero
-    double sum = log(1e-10);
-    for (; i < mel.n_len; i += n_threads) {
-        for (int j = 0; j < mel.n_mel; j++) {
-            mel.data[j * mel.n_len + i] = sum;
         }
     }
 }
@@ -196,18 +187,18 @@ bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samp
         }
     }
 
-    {
-        // reverse the mel
-        double _tmp[mel.data.size()];
-        for (int i = 0; i < mel.n_mel; i++) {
-            for (int j = 0; j < mel.n_len; j++) {
-                _tmp[j * mel.n_mel + i] = mel.data[i * mel.n_len + j];
-            }
-        }
-        for (int i = 0; i < mel.data.size(); i++) {
-            mel.data[i] = _tmp[i];
-        }
-    }
+    //    {
+    //        // reverse the mel
+    //        double _tmp[mel.data.size()];
+    //        for (int i = 0; i < mel.n_mel; i++) {
+    //            for (int j = 0; j < mel.n_len; j++) {
+    //                _tmp[j * mel.n_mel + i] = mel.data[i * mel.n_len + j];
+    //            }
+    //        }
+    //        for (int i = 0; i < mel.data.size(); i++) {
+    //            mel.data[i] = _tmp[i];
+    //        }
+    //    }
 
     //    if (debug) {
     //        std::ofstream outFile("fbank_lfr_cmvn_feature.json");
