@@ -31,13 +31,16 @@ def main():
             mel_num = mel_scale(fft_bin_width * j)
             up_slope = (mel_num - left_mel) / (center_mel - left_mel)
             down_slope = (right_mel - mel_num) / (right_mel - center_mel)
-            filter = max(0.0, min(up_slope, down_slope))
-            s += f"{sep}{filter:.8f}"
+            _filter = max(0.0, min(up_slope, down_slope))
+            s += f"{sep}{_filter:.8f}"
             count += 1
             sep = ", "
-            if count % 7 == 0:
+            if count % 8 == 0:
                 s += ",\n\t"
                 sep = ""
+
+            if count % 256 == 0:
+                s += "\n\t"
 
     s += "};\n"
 
