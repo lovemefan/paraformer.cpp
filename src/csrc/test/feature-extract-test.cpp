@@ -14,10 +14,8 @@ int main() {
     int frame_size = 25;
     int frame_step = 10;
     int n_mel = 80;
-    int n_thread = 4;
-    char *cmvn_file =
-        "/Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/"
-        "speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404/am.mvn";
+    int n_thread = 2;
+    char *cmvn_file = "/Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/am.mvn";
     struct paraformer_cmvn cmvn;
     load_cmvn(cmvn_file, cmvn);
     paraformer_mel mel;
