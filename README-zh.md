@@ -7,12 +7,12 @@ paraformer是阿里funasr开源的中文语音识别模型。 本项目基于ggm
 - [x] 定义模型结构
 - [x] 初始化模型
 - [x] 加载模型参数和词表
+- [x] fbank + lfr + cvmn 特征提取
 - [ ] 构建计算图
     - [x] encoder
     - [ ] predictor
     - [ ] decoder
     - [ ] bias encoder
-- [x] fbank + lfr + cvmn 特征提取
 
 ## 特性
 
@@ -29,6 +29,11 @@ paraformer是阿里funasr开源的中文语音识别模型。 本项目基于ggm
 git clone https://github.com/lovemefan/paraformer.cpp
 cd git paraformer.cpp
 git submodule sync && git submodule update --init --recursive
+
+mkdir build && cd build
+cmake ../src/csrc && make -j 8
+
+
 # download model weight from modelscope
 git clone https://www.modelscope.cn/damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404.git resource/model
 # convert weight and vocab into ggml format

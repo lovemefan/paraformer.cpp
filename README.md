@@ -8,12 +8,12 @@ with [ggml](https://github.com/ggerganov/ggml/)
 - [x] Define model structure
 - [x] Initialize model
 - [x] Load model parameters and vocabulary
+- [x] fbank + lfr + cmvn feature extraction
 - [ ] Build calculation forward graph
     - [x] encoder
     - [ ] predictor
     - [ ] decoder
     - [ ] bias encoder
-- [x] fbank + lfr + cmvn feature extraction
 
 ## usage
 
@@ -23,6 +23,10 @@ you need download model from modelscope and convert weight with script
 git clone https://github.com/lovemefan/paraformer.cpp
 cd git paraformer.cpp
 git submodule sync && git submodule update --init --recursive
+
+mkdir build && cd build
+cmake ../src/csrc && make -j 8
+
 # download model weight from modelscope
 git clone https://www.modelscope.cn/damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404.git resource/model
 # convert weight and vocab into ggml format
