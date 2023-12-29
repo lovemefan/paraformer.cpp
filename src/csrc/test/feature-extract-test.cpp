@@ -3,6 +3,8 @@
 //
 #include <time.h>
 
+#include <chrono>
+
 #include "paraformer-frontend.h"
 
 int main() {
@@ -14,13 +16,14 @@ int main() {
     int frame_size = 25;
     int frame_step = 10;
     int n_mel = 80;
-    int n_thread = 2;
+    int n_thread = 8;
     char *cmvn_file = "/Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/am.mvn";
     struct paraformer_cmvn cmvn;
     load_cmvn(cmvn_file, cmvn);
-    paraformer_mel mel;
-    clock_t start = clock();
+    paraformer_feature mel;
+    auto start = std::chrono::steady_clock::now();
     fbank_lfr_cmvn_feature(samples, n_samples, frame_size, frame_step, n_mel, n_thread, true, cmvn, mel);
-    clock_t end = clock();
-    printf("it costed %f s", (double)(end - start) / CLOCKS_PER_SEC);
+    auto end = std::chrono::steady_clock::now();
+    std::chrono::duration<double> diff = end - start;
+    printf("it costed %f s", diff.count());
 }
