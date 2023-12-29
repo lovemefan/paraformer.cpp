@@ -89,7 +89,7 @@ void load_cmvn(const char *filename, paraformer_cmvn &cmvn) {
 
 static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamming, const std::vector<double> &samples,
                                         int n_samples, int frame_size, int frame_step, int n_threads,
-                                        paraformer_mel &mel) {
+                                        paraformer_feature &mel) {
     // make sure n_fft == 1 + (PARAFORMER_N_FFT / 2), bin_0 to bin_nyquist
     int i = ith;
 
@@ -159,7 +159,7 @@ static void fbank_feature_worker_thread(int ith, const std::vector<double> &hamm
 
 bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samples, const int frame_size,
                             const int frame_step, const int n_mel, const int n_threads, const bool debug,
-                            paraformer_cmvn &cmvn, paraformer_mel &mel) {
+                            paraformer_cmvn &cmvn, paraformer_feature &mel) {
     //    const int64_t t_start_us = ggml_time_us();
 
     const int32_t n_frames_per_ms = PARAFORMER_SAMPLE_RATE * 0.001f;
@@ -186,19 +186,6 @@ bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samp
             workers[iw].join();
         }
     }
-
-    //    {
-    //        // reverse the mel
-    //        double _tmp[mel.data.size()];
-    //        for (int i = 0; i < mel.n_mel; i++) {
-    //            for (int j = 0; j < mel.n_len; j++) {
-    //                _tmp[j * mel.n_mel + i] = mel.data[i * mel.n_len + j];
-    //            }
-    //        }
-    //        for (int i = 0; i < mel.data.size(); i++) {
-    //            mel.data[i] = _tmp[i];
-    //        }
-    //    }
 
     //    if (debug) {
     //        std::ofstream outFile("fbank_lfr_cmvn_feature.json");

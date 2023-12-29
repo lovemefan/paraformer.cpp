@@ -13,7 +13,7 @@
 
 #define PARAFORMER_SAMPLE_RATE 16000
 #define PREEMPH_COEFF 0.97
-struct paraformer_mel {
+struct paraformer_feature {
     int n_len;
     int n_len_org;
     int n_mel;
@@ -111,4 +111,4 @@ void load_cmvn(const char *filename, paraformer_cmvn &cmvn);
 bool load_wav_file(const char *filename, int32_t *sampling_rate, std::vector<double> &data);
 bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samples, const int frame_size,
                             const int frame_step, const int n_mel, const int n_threads, const bool debug,
-                            paraformer_cmvn &cmvn, paraformer_mel &mel);
+                            paraformer_cmvn &cmvn, paraformer_feature &mel);
