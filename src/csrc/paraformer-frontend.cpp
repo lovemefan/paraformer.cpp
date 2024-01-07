@@ -6,6 +6,7 @@
 
 #include <cassert>
 
+#include "ThreadPool.h"
 #include "log-mel-filter-bank.h"
 
 #define M_2PI 6.283185307179586476925286766559005
@@ -83,6 +84,58 @@ void load_cmvn(const char *filename, paraformer_cmvn &cmvn) {
                 }
                 continue;
             }
+        }
+    }
+}
+
+static void lrf_cmvn_worker_thread(int ith, paraformer_feature &mel, paraformer_cmvn &cmvn,
+                                   std::vector<std::vector<double>> &out_feats) {
+    // tapply lrf, merge lfr_m frames as one,lfr_n frames per window
+    // ref: https://github.com/alibaba-damo-academy/FunASR/blob/main/runtime/onnxruntime/src/paraformer.cpp#L409-L440
+    int T = mel.n_len;
+    int lfr_m = mel.lfr_m;  // 7
+    int lfr_n = mel.lfr_n;  // 6
+    int T_lrf = ceil(1.0 * T / mel.lfr_n);
+    int left_pad = (mel.lfr_m - 1) / 2;
+    int left_pad_offset = (lfr_m - left_pad) * mel.n_mel;
+    // Merge lfr_m frames as one,lfr_n frames per window
+    T = T + (lfr_m - 1) / 2;
+    std::vector<double> p;
+    for (int i = 0; i < T_lrf; i++) {
+        // the first frames need left padding
+        if (i == 0) {
+            // left padding
+            for (int j = 0; j < left_pad; j++) {
+                p.insert(p.end(), mel.data.begin(), mel.data.begin() + mel.n_mel);
+            }
+            p.insert(p.end(), mel.data.begin(), mel.data.begin() + left_pad_offset);
+            out_feats.emplace_back(p);
+            p.clear();
+        } else {
+            if (lfr_m <= T - i * lfr_n) {
+                p.insert(p.end(), mel.data.begin() + (i * lfr_n - left_pad) * mel.n_mel,
+                         mel.data.begin() + (i * lfr_n - left_pad + lfr_m) * mel.n_mel);
+                out_feats.emplace_back(p);
+                p.clear();
+            } else {
+                // Fill to lfr_m frames at last window if less than lfr_m frames  (copy last frame)
+                int num_padding = lfr_m - (T - i * lfr_n);
+                for (int j = 0; j < (mel.n_len - i * lfr_n); j++) {
+                    p.insert(p.end(), mel.data.begin() + (i * lfr_n - left_pad) * mel.n_mel, mel.data.end());
+                }
+                for (int j = 0; j < num_padding; j++) {
+                    p.insert(p.end(), mel.data.end() - mel.n_mel, mel.data.end());
+                }
+                out_feats.emplace_back(p);
+                p.clear();
+            }
+        }
+    }
+
+    // apply cvmn
+    for (auto &out_feat : out_feats) {
+        for (int j = 0; j < cmvn.cmvn_means.size(); j++) {
+            out_feat[j] = (out_feat[j] + cmvn.cmvn_means[j]) * cmvn.cmvn_vars[j];
         }
     }
 }
@@ -171,20 +224,15 @@ bool fbank_lfr_cmvn_feature(const std::vector<double> &samples, const int n_samp
     hamming_window(frame_size * n_frames_per_ms, true, hamming);
 
     {
-        std::vector<std::thread> workers(n_threads - 1);
+        ThreadPool pool(n_threads);
         for (int iw = 0; iw < n_threads - 1; ++iw) {
-            workers[iw] =
-                std::thread(fbank_feature_worker_thread, iw + 1, std::cref(hamming), samples, n_samples,
-                            frame_size * n_frames_per_ms, frame_step * n_frames_per_ms, n_threads, std::ref(mel));
+            pool.enqueue(fbank_feature_worker_thread, iw + 1, std::cref(hamming), samples, n_samples,
+                         frame_size * n_frames_per_ms, frame_step * n_frames_per_ms, n_threads, std::ref(mel));
         }
 
         // main thread
         fbank_feature_worker_thread(0, hamming, samples, n_samples, frame_size * n_frames_per_ms,
                                     frame_step * n_frames_per_ms, n_threads, mel);
-
-        for (int iw = 0; iw < n_threads - 1; ++iw) {
-            workers[iw].join();
-        }
     }
 
     //    if (debug) {
