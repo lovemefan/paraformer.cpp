@@ -13,6 +13,7 @@ paraformer是阿里funasr开源的中文语音识别模型。 本项目基于ggm
     - [ ] predictor
     - [ ] decoder
     - [ ] bias encoder
+    - [ ] seaco decoder
 
 ## 特性
 
