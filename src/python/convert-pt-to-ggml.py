@@ -1,8 +1,9 @@
 # Convert paraformer model from PyTorch to ggml format
 #
-# Usage: python convert-pt-to-ggml.py -i damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404/ -o .
-#
-# You need to download the model from https://www.modelscope.cn/models/damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404/summary
+# Usage:
+# python convert-pt-to-ggml.py -i damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404/ -o .
+# You need to download the model from
+# https://www.modelscope.cn/models/damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404/summary
 #
 # Also, you need to have the original models in damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404
 # ├── am.mvn
@@ -41,20 +42,18 @@
 
 import argparse
 import io
-import os
-import sys
 import struct
-import json
-import torch
-import numpy as np
-import base64
+import sys
 from pathlib import Path
 
-if __name__ == '__main__':
+import numpy as np
+import torch
+
+if __name__ == "__main__":
     parse = argparse.ArgumentParser()
-    parse.add_argument('--input', '-i', required=True)
-    parse.add_argument('--output', '-o', default='.')
-    parse.add_argument('--fp16', action='store_true')
+    parse.add_argument("--input", "-i", required=True)
+    parse.add_argument("--output", "-o", default=".")
+    parse.add_argument("--fp16", action="store_true")
     args = parse.parse_args()
 
     dir_in = Path(args.input)
@@ -62,35 +61,40 @@ if __name__ == '__main__':
 
     # try to load PyTorch binary data
     try:
-        model_bytes = open(dir_in / 'model.pb', "rb").read()
+        model_bytes = open(dir_in / "model.pb", "rb").read()
         with io.BytesIO(model_bytes) as fp:
             checkpoint = torch.load(fp, map_location="cpu")
     except Exception:
-        print("Error: failed to load PyTorch model file:", dir_in / 'model.pb')
+        print("Error: failed to load PyTorch model file:", dir_in / "model.pb")
         sys.exit(1)
 
     hparams = {}
 
-    with open(dir_in / 'tokens.txt', "rb") as f:
+    with open(dir_in / "tokens.txt", "rb") as f:
         contents = f.read()
-        tokens = {token: int(rank) for rank, token in enumerate(line.strip() for line in contents.splitlines() if line)}
+        tokens = {
+            token: int(rank)
+            for rank, token in enumerate(
+                line.strip() for line in contents.splitlines() if line
+            )
+        }
 
-    hparams['n_vocab'] = len(tokens)
+    hparams["n_vocab"] = len(tokens)
     # encoder config
-    hparams['n_encoder_hidden_state'] = 512
-    hparams['n_encoder_linear_units'] = 2048
-    hparams['n_encoder_attention_heads'] = 4
-    hparams['n_encoder_layers'] = 50
+    hparams["n_encoder_hidden_state"] = 512
+    hparams["n_encoder_linear_units"] = 2048
+    hparams["n_encoder_attention_heads"] = 4
+    hparams["n_encoder_layers"] = 50
     # decoder config
-    hparams['n_decoder_hidden_state'] = 512
-    hparams['n_encoder_0_norm_size'] = 560
-    hparams['n_decoder_linear_units'] = 2048
-    hparams['n_decoder_attention_heads'] = 4
-    hparams['n_decoder_layers'] = 15
-    hparams['fsmn_kernel_size'] = 11
+    hparams["n_decoder_hidden_state"] = 512
+    hparams["n_encoder_0_norm_size"] = 560
+    hparams["n_decoder_linear_units"] = 2048
+    hparams["n_decoder_attention_heads"] = 4
+    hparams["n_decoder_layers"] = 15
+    hparams["fsmn_kernel_size"] = 11
     # predictor config
-    hparams['n_predictor_dim'] = 512
-    hparams['predictor_tail_threshold'] = 0.45
+    hparams["n_predictor_dim"] = 512
+    hparams["predictor_tail_threshold"] = 0.45
 
     print("hparams:", hparams)
     # output in the same directory as the model
@@ -101,7 +105,7 @@ if __name__ == '__main__':
 
     fout = fname_out.open("wb")
 
-    fout.write(struct.pack("i", 0x67676d6c))  # magic: ggml in hex
+    fout.write(struct.pack("i", 0x67676D6C))  # magic: ggml in hex
     fout.write(struct.pack("i", hparams["n_vocab"]))
     fout.write(struct.pack("i", hparams["n_encoder_hidden_state"]))
     fout.write(struct.pack("i", hparams["n_encoder_linear_units"]))
@@ -149,14 +153,21 @@ if __name__ == '__main__':
             data = data.astype(np.float32)
             ftype = 0
 
-        str_ = name.encode('utf-8')
+        str_ = name.encode("utf-8")
         fout.write(struct.pack("iii", n_dims, len(str_), ftype))
         for i in range(n_dims):
             fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
         fout.write(str_)
 
         # data
-        print("Processing variable: ", name, " with shape: ", data.shape, ' with type: ', data.dtype)
+        print(
+            "Processing variable: ",
+            name,
+            " with shape: ",
+            data.shape,
+            " with type: ",
+            data.dtype,
+        )
         data.tofile(fout)
 
     fout.close()
