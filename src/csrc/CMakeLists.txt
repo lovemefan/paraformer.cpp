@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Wall")
 
 set(SOURCE_FILES
-        paraformer-contextual-offline.cpp
+        paraformer-offline.cpp
         paraformer-frontend.cpp
         log-mel-filter-bank.h
         fftsg.cpp

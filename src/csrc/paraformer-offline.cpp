@@ -2,19 +2,25 @@
 // Created by lovemefan on 2024/3/23.
 //
 
-#include "seaco-paraformer-offline.h"
-//
-// Created by lovemefan on 2023/11/4.
-//
+#include "paraformer-offline.h"
 
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
+#ifdef GGML_USE_CUDA
+#include "ggml-cuda.h"
+#endif
 #include <assert.h>
 #include <math.h>
 #include <stdarg.h>
 
+#include <cstddef>
 #include <fstream>
 #include <functional>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
-#include "paraformer-contextual-offline.h"
 #if defined(_MSC_VER)
 #pragma warning(disable : 4244 4267)  // possible loss of data
 #endif
@@ -87,12 +93,52 @@ static void byteswap_tensor(ggml_tensor *tensor) {
   } while (0)
 #endif
 
-#define PARAFORMER_ASSERT(x)                                         \
-  do {                                                               \
-    if (!(x)) {                                                      \
-      log("PARAFORMER_ASSERT: %s:%d: %s\n", __FILE__, __LINE__, #x); \
-      abort();                                                       \
-    }                                                                \
+#ifdef __GNUC__
+#ifdef __MINGW32__
+#define PARAFORMER_ATTRIBUTE_FORMAT(...) \
+  __attribute__((format(gnu_printf, __VA_ARGS__)))
+#else
+#define PARAFORMER_ATTRIBUTE_FORMAT(...) \
+  __attribute__((format(printf, __VA_ARGS__)))
+#endif
+#else
+#define PARAFORMER_ATTRIBUTE_FORMAT(...)
+#endif
+
+//
+// logging
+//
+
+PARAFORMER_ATTRIBUTE_FORMAT(2, 3)
+static void paraformer_log_internal(ggml_log_level level, const char *format,
+                                    ...);
+static void paraformer_log_callback_default(ggml_log_level level,
+                                            const char *text, void *user_data);
+
+#define PARAFORMER_LOG_ERROR(...) \
+  paraformer_log_internal(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
+#define PARAFORMER_LOG_WARN(...) \
+  paraformer_log_internal(GGML_LOG_LEVEL_WARN, __VA_ARGS__)
+#define PARAFORMER_LOG_INFO(...) \
+  paraformer_log_internal(GGML_LOG_LEVEL_INFO, __VA_ARGS__)
+
+// define this to enable verbose trace logging - useful for debugging purposes
+// #define PARAFORMER_DEBUG
+
+#if defined(PARAFORMER_DEBUG)
+#define PARAFORMER_LOG_DEBUG(...) \
+  paraformer_log_internal(GGML_LOG_LEVEL_DEBUG, __VA_ARGS__)
+#else
+#define PARAFORMER_LOG_DEBUG(...)
+#endif
+
+#define PARAFORMER_ASSERT(x)                                           \
+  do {                                                                 \
+    if (!(x)) {                                                        \
+      PARAFORMER_LOG_ERROR("PARAFORMER_ASSERT: %s:%d: %s\n", __FILE__, \
+                           __LINE__, #x);                              \
+      abort();                                                         \
+    }                                                                  \
   } while (0)
 
 template <typename T>
@@ -101,15 +147,42 @@ static void read_safe(paraformer_model_loader *loader, T &dest) {
   BYTESWAP_VALUE(dest);
 }
 
-static void log(const char *fmt, ...) {
-  char buf[1024];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
-  fprintf(stderr, "%s", buf);
+static const size_t MB = 1ull * 1024 * 1024;
+
+static void paraformer_log_callback_default(ggml_log_level level,
+                                            const char *text, void *user_data) {
+  (void)level;
+  (void)user_data;
+  fputs(text, stderr);
+  fflush(stderr);
 }
 
-static const size_t MB = 1ull * 1024 * 1024;
+struct paraformer_global {
+  // We save the log callback globally
+  ggml_log_callback log_callback = paraformer_log_callback_default;
+  void *log_callback_user_data = nullptr;
+};
+
+static paraformer_global g_state;
+
+GGML_ATTRIBUTE_FORMAT(2, 3)
+static void paraformer_log_internal(ggml_log_level level, const char *format,
+                                    ...) {
+  va_list args;
+  va_start(args, format);
+  char buffer[1024];
+  int len = vsnprintf(buffer, 1024, format, args);
+  if (len < 1024) {
+    g_state.log_callback(level, buffer, g_state.log_callback_user_data);
+  } else {
+    char *buffer2 = new char[len + 1];
+    vsnprintf(buffer2, len + 1, format, args);
+    buffer2[len] = 0;
+    g_state.log_callback(level, buffer2, g_state.log_callback_user_data);
+    delete[] buffer2;
+  }
+  va_end(args);
+}
 
 static const std::map<ggml_type, std::map<e_model, size_t>> MEM_REQ_MODEL = {
     {
@@ -147,41 +220,417 @@ static const std::map<ggml_type, std::map<e_model, size_t>> MEM_REQ_MODEL = {
     },
 };
 
+struct paraformer_hparams {
+  int n_vocab = 8404;                // number of vocab
+  int n_max_audio_length = 20000;    //
+  int n_encoder_hidden_state = 512;  // dim of hidden state
+  int n_encoder_linear_units = 2048;
+  int n_encoder_attention_heads = 4;  // head of self attention
+  int n_encoder_layers = 50;          // num block of encoder
+  int n_encoder_0_norm_size = 560;
+  int n_decoder_hidden_state = 512;
+  int n_decoder_linear_units = 2048;
+  int n_decoder_attention_heads = 4;
+  int n_decoder_layers = 14;
+  int fsmn_kernel_size = 11;
+
+  int n_predictor_dim = 512;
+  float predictor_tail_threshold = 0.45;
+
+  int n_mels = 80;  // dim of mels
+  std::string window = "hamming";
+  int frame_length = 25;
+  int frame_shift = 10;
+  int lfr_m = 7;
+  int lfr_n = 6;
+  int ftype = 1;
+  float eps = 1e-5f;
+  e_model model_type = e_model::MODEL_SEACO_OFFLINE;
+  int n_audio_ctx;
+};
+
+// ############ model structure #############
+struct paraformer_bias_encoder {
+  // bias encoder is a lstm model
+
+  struct ggml_tensor *bias_embed;
+
+  // bias_encoder.weight_ih_l0
+  struct ggml_tensor *be_ih_l_w;
+  struct ggml_tensor *be_ih_l_b;
+
+  // bias_encoder.weight_hh_l0
+  struct ggml_tensor *be_hh_l_w;
+  struct ggml_tensor *be_hh_l_b;
+};
+
+struct paraformer_layer_encoder {
+  // encoder_attn.linear_out.weight
+  struct ggml_tensor *e_attn_ln_out_w;
+  struct ggml_tensor *e_attn_ln_out_b;
+
+  // encoder.self_attn.linear_q_k_v.weight
+  struct ggml_tensor *e_attn_ln_qkv_w;
+  struct ggml_tensor *e_attn_ln_qkv_b;
+
+  // encoder.self_attn.fsmn_block.weight
+  struct ggml_tensor *e_attn_fsmn_w;
+
+  // encoder.feed_forward.w_1.weight
+  struct ggml_tensor *e_mlp_w1;
+  struct ggml_tensor *e_mlp_b1;
+
+  // encoder.feed_forward.w_2.weight
+  struct ggml_tensor *e_mlp_w2;
+  struct ggml_tensor *e_mlp_b2;
+
+  // encoder.norm1.weight
+  struct ggml_tensor *e_norm_w1;
+  struct ggml_tensor *e_norm_b1;
+
+  // encoder.norm2.weight
+  struct ggml_tensor *e_norm_w2;
+  struct ggml_tensor *e_norm_b2;
+};
+
+struct paraformer_encoder {
+  ggml_type wtype = ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
+  ggml_type itype =
+      ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
+
+  std::vector<paraformer_layer_encoder> encoder_layer;
+  // encoder.after_norm.weight
+  struct ggml_tensor *e_after_norm_w;
+  struct ggml_tensor *e_after_norm_b;
+};
+
+// token decoding layer
+struct paraformer_layer_decoder {
+  // decoder.self_attn.fsmn_block.weight
+  struct ggml_tensor *d_attn_fsmn_w;
+
+  // decoder.src_attn.linear_q.weight
+  struct ggml_tensor *d_src_attn_ln_q_w;
+  struct ggml_tensor *d_src_attn_ln_q_b;
+
+  // decoder.src_attn.linear_k_v.weight
+  struct ggml_tensor *d_src_attn_ln_kv_w;
+  struct ggml_tensor *d_src_attn_ln_kv_b;
+
+  // decoder.src_attn.linear_out.weight
+  struct ggml_tensor *d_src_attn_ln_o_w;
+  struct ggml_tensor *d_src_attn_ln_o_b;
+
+  // decoder.feed_forward.w_1.weight
+  struct ggml_tensor *d_mlp_ln_w1;
+  struct ggml_tensor *d_mlp_ln_b1;
+
+  // decoder.feed_forward.w_2.weight
+  struct ggml_tensor *d_mlp_ln_w2;
+
+  // decoder.feed_forward.norm.weight
+  struct ggml_tensor *d_mlp_norm_w;
+  struct ggml_tensor *d_mlp_norm_b;
+
+  // decoder.norm1.weight
+  struct ggml_tensor *d_norm_w1;
+  struct ggml_tensor *d_norm_b1;
+
+  // decoder.norm2.weight
+  struct ggml_tensor *d_norm_w2;
+  struct ggml_tensor *d_norm_b2;
+
+  // decoder.norm3.weight
+  struct ggml_tensor *d_norm_w3;
+  struct ggml_tensor *d_norm_b3;
+};
+
+struct paraformer_decoder {
+  // decoder embedding
+  struct ggml_tensor *embed;
+
+  // decoder after norm
+  struct ggml_tensor *d_after_norm_w;
+  struct ggml_tensor *d_after_norm_b;
+
+  // decoder .output_layer
+  struct ggml_tensor *d_output_w;
+  struct ggml_tensor *d_output_b;
+
+  std::vector<paraformer_layer_decoder> decoder_layers;
+
+  //-------decoder.decoder3.bias_decoder------
+  // decoder.decoder3.feed_forward.w_1.weight
+  struct ggml_tensor *d3_mlp_ln_w1;
+  struct ggml_tensor *d3_mlp_ln_b1;
+
+  // decoder.decoder3.feed_forward.w_2.weight
+  struct ggml_tensor *d3_mlp_ln_w2;
+
+  // decoder.decoder3.feed_forward.norm.weight
+  struct ggml_tensor *d3_mlp_norm_w;
+  struct ggml_tensor *d3_mlp_norm_b;
+
+  // decoder.decoder3.norm1.weight
+  struct ggml_tensor *d3_norm_w1;
+  struct ggml_tensor *d3_norm_b1;
+
+  //-------decoder.bias_decoder------
+  // decoder.bias_decoder.src_attn.linear_q.weight
+  struct ggml_tensor *d_bias_src_attn_ln_q_w;
+  struct ggml_tensor *d_bias_src_attn_ln_q_b;
+
+  // decoder.bias_decoder.src_attn.linear_k_v.weight
+  struct ggml_tensor *d_bias_src_attn_ln_kv_w;
+  struct ggml_tensor *d_bias_src_attn_ln_kv_b;
+
+  // decoder.bias_decoder.src_attn.linear_out.weight
+  struct ggml_tensor *d_bias_src_attn_ln_o_w;
+  struct ggml_tensor *d_bias_src_attn_ln_o_b;
+
+  // decoder.bias_decoder.norm3.weight
+  struct ggml_tensor *d_bias_norm_w3;
+  struct ggml_tensor *d_bias_norm_b3;
+
+  // decoder.bias_output.weight
+  struct ggml_tensor *d_bias_ln_o_w;
+
+  //-------last_decoder.bias_decoder------
+
+  // decoder.last_decoder.self_attn.fsmn_block.weight
+  struct ggml_tensor *d_last_attn_fsmn_w;
+
+  // decoder.last_decoder.src_attn.linear_q.weight
+  struct ggml_tensor *d_last_src_attn_ln_q_w;
+  struct ggml_tensor *d_last_src_attn_ln_q_b;
+
+  // decoder.last_decoder.src_attn.linear_k_v.weight
+  struct ggml_tensor *d_last_src_attn_ln_kv_w;
+  struct ggml_tensor *d_last_src_attn_ln_kv_b;
+
+  // decoder.last_decoder.src_attn.linear_out.weight
+  struct ggml_tensor *d_last_src_attn_ln_o_w;
+  struct ggml_tensor *d_last_src_attn_ln_o_b;
+
+  // decoder.last_decoder.feed_forward.w_1.weight
+  struct ggml_tensor *d_last_mlp_ln_w1;
+  struct ggml_tensor *d_last_mlp_ln_b1;
+
+  // decoder.last_decoder.feed_forward.w_2.weight
+  struct ggml_tensor *d_last_mlp_ln_w2;
+
+  // decoder.last_decoder.feed_forward.norm.weight
+  struct ggml_tensor *d_last_mlp_norm_w;
+  struct ggml_tensor *d_last_mlp_norm_b;
+
+  // decoder.last_decoder.norm1.weight
+  struct ggml_tensor *d_last_norm_w1;
+  struct ggml_tensor *d_last_norm_b1;
+
+  // decoder.last_decoder.norm2.weight
+  struct ggml_tensor *d_last_norm_w2;
+  struct ggml_tensor *d_last_norm_b2;
+
+  // decoder.last_decoder.norm3.weight
+  struct ggml_tensor *d_last_norm_w3;
+  struct ggml_tensor *d_last_norm_b3;
+};
+
+struct paraformer_predictor {
+  // predictor.cif_conv1d.weight
+  struct ggml_tensor *cif_conv1d_w;
+  struct ggml_tensor *cif_conv1d_b;
+
+  struct ggml_tensor *cif_ln_out_w;
+  struct ggml_tensor *cif_ln_out_b;
+};
+
+// contextual bias paraformer contains bias, encoder, predict and decoder
+// more detail in https://arxiv.org/pdf/2308.03266.pdf
+struct paraformer_model {
+  e_model type = MODEL_CONTEXTUAL_OFFLINE;
+  paraformer_hparams hparams;
+
+  paraformer_bias_encoder bias_encoder;
+  paraformer_encoder encoder;
+  paraformer_decoder decoder;
+  paraformer_predictor predictor;
+  // context
+  struct ggml_context *ctx;
+
+  // the model memory buffer is read-only and can be shared between processors
+  std::vector<uint8_t> *buf;
+
+  // tensors
+  int n_loaded;
+  std::map<std::string, struct ggml_tensor *> tensors;
+};
+
+struct paraformer_vocab {
+  using id = int32_t;
+  using token = std::string;
+
+  int n_vocab = 8404;
+
+  std::map<token, id> token_to_id;
+  std::map<id, token> id_to_token;
+
+  id token_eot = 2;
+  id token_sot = 1;
+};
+
+// replace std::pair by using customized pair struct (reason: std::pair is very
+// slow)
+template <typename A, typename B>
+struct paraformer_pair {
+  A first;
+  B second;
+
+  // Define a constructor that takes two arguments.
+  paraformer_pair(const A &a, const B &b) : first(a), second(b) {}
+  // Define a constructor that takes no argument.
+  paraformer_pair() : first(A()), second(B()) {}
+};
+
+// ggml_allocr wrapper for PARAFORMER usage
+struct paraformer_allocr {
+  ggml_gallocr_t *alloc = nullptr;
+  std::vector<uint8_t> meta;
+  std::vector<uint8_t> data;
+};
+
+struct paraformer_context {
+  int64_t t_load_ms = 0;
+  int64_t t_start_ms = 0;
+
+  ggml_type wtype = ggml_type::GGML_TYPE_F16;  // weight type (FP32 / FP16 / QX)
+  ggml_type itype =
+      ggml_type::GGML_TYPE_F16;  // intermediate type (FP32 or FP16)
+
+  paraformer_model model;
+  paraformer_vocab vocab;
+
+  struct paraformer_state *state = nullptr;
+  ggml_backend_t backend = nullptr;
+  std::string path_model;
+};
+
+struct paraformer_token_data {
+  int id;   // token id
+  int tid;  // forced timestamp token id
+
+  float p;      // probability of the token
+  float plog;   // log probability of the token
+  float pt;     // probability of the timestamp token
+  float ptsum;  // sum of probabilities of all timestamp tokens
+
+  // token-level timestamp data
+  // do not use if you haven't computed token-level timestamps
+  int64_t t0;  // start time of the token
+  int64_t t1;  //   end time of the token
+
+  float vlen;  // voice length of the token
+};
+
+struct paraformer_segment {
+  int64_t t0;
+  int64_t t1;
+  std::string text;
+  std::vector<paraformer_token_data> tokens;
+  bool speaker_turn_next;
+};
+
+struct paraformer_state {
+  int64_t t_sample_us = 0;
+  int64_t t_encode_us = 0;
+  int64_t t_decode_us = 0;
+  int64_t t_prompt_us = 0;
+  int64_t t_mel_us = 0;
+
+  int32_t n_sample = 0;  // number of tokens sampled
+  int32_t n_encode = 0;  // number of encoder calls
+  int32_t n_decode =
+      0;  // number of decoder calls with n_tokens == 1 (text-generation)
+  int32_t n_prompt =
+      0;  // number of decoder calls with n_tokens >  1 (prompt encoding)
+  int32_t n_fail_p = 0;  // number of logprob threshold failures
+  int32_t n_fail_h = 0;  // number of entropy threshold failures
+
+  // shared between all decoders
+  paraformer_feature feature;
+
+  // reusable buffer for `struct ggml_graph_plan.work_data`
+  std::vector<uint8_t> work_buffer;
+
+  // ggml-alloc:
+  // - stores meta info about the intermediate tensors into the `meta` buffers
+  // - stores the actual tensor data into the `data` buffers
+  paraformer_allocr alloc_bias_encoder;
+  paraformer_allocr alloc_encode;
+  paraformer_allocr alloc_predict;
+  paraformer_allocr alloc_decode;
+
+  // result of the encoder
+  struct ggml_tensor *embd_enc = nullptr;
+
+  // decode output (2-dimensional array: [n_tokens][n_vocab])
+  std::vector<float> logits;
+
+  std::vector<paraformer_segment> result_all;
+  std::vector<int> prompt_past;
+
+  // work container used to avoid memory allocations
+  std::vector<paraformer_pair<double, paraformer_vocab::id>> logits_id;
+
+  int lang_id = 0;  // english by default
+
+  std::string path_model;  // populated by PARAFORMER_init_from_file()
+#ifdef USE_COREML
+  PARAFORMER_coreml_context *ctx_coreml = nullptr;
+#endif
+
+#ifdef GGML_USE_METAL
+  ggml_metal_context *ctx_metal = nullptr;
+#endif
+
+  // [EXPERIMENTAL] token-level timestamps data
+  int64_t t_beg = 0;
+  int64_t t_last = 0;
+  int tid_last;
+  std::vector<float> energy;  // PCM signal energy
+
+  // [EXPERIMENTAL] speed-up techniques
+  int32_t exp_n_audio_ctx = 0;  // 0 - use default
+};
+
 static size_t paraformer_allocr_size(struct paraformer_allocr &allocr) {
   return allocr.meta.size() + allocr.data.size();
 }
 
 // measure the memory usage of a graph and prepare the allocr's internal data
 // buffer
-static void paraformer_allocr_graph_init(
-    struct paraformer_allocr &allocr,
+static bool paraformer_allocr_graph_init(
+    struct paraformer_allocr &allocr, ggml_backend_t backend,
     std::function<struct ggml_cgraph *()> &&get_graph) {
-  const int tensor_alignment = 32;
-
   auto &alloc = allocr.alloc;
   auto &meta = allocr.meta;
-  auto &data = allocr.data;
+
+  alloc = reinterpret_cast<ggml_gallocr_t *>(
+      ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)));
 
   meta.resize(ggml_tensor_overhead() * PARAFORMER_MAX_NODES +
               ggml_graph_overhead());
 
-  alloc = ggml_allocr_new_measure(tensor_alignment);
-
-  const size_t alloc_size =
-      ggml_allocr_alloc_graph(alloc, get_graph()) + tensor_alignment;
-
-  ggml_allocr_free(alloc);
-
-  data.resize(alloc_size);
-
-  alloc = ggml_allocr_new(data.data(), data.size(), tensor_alignment);
-}
-
-static void paraformer_allocr_free(struct paraformer_allocr &allocr) {
-  if (allocr.alloc) {
-    ggml_allocr_free(allocr.alloc);
-    allocr.alloc = nullptr;
+  // since there are dependencies between the different graphs,
+  // we need to allocate them instead of only reserving to get the correct
+  // compute buffer size
+  if (!ggml_gallocr_alloc_graph(*alloc, get_graph())) {
+    // failed to allocate the compute buffer
+    PARAFORMER_LOG_ERROR("%s: failed to allocate the compute buffer\n",
+                         __func__);
+    return false;
   }
+  return true;
 }
 
 struct paraformer_context *paraformer_init(
@@ -192,7 +641,7 @@ struct paraformer_context *paraformer_init(
 
   if (!paraformer_model_load(loader, *ctx)) {
     loader->close(loader->context);
-    log("%s: failed to load model\n", __func__);
+    PARAFORMER_LOG_INFO("%s: failed to load model\n", __func__);
     delete ctx;
     return nullptr;
   }
@@ -202,12 +651,21 @@ struct paraformer_context *paraformer_init(
   return ctx;
 }
 
-struct paraformer_context *paraformer_init_from_file(const char *path_model) {
-  log("%s: loading model from '%s'\n", __func__, path_model);
+struct paraformer_context_params paraformer_context_default_params() {
+  struct paraformer_context_params result = {
+      /*.use_gpu              =*/true,
+      /*.gpu_device           =*/0,
+  };
+  return result;
+}
+
+struct paraformer_context *paraformer_init_from_file_with_params(
+    const char *path_model, struct paraformer_context_params params) {
+  PARAFORMER_LOG_INFO("%s: loading model from '%s'\n", __func__, path_model);
 
   auto fin = std::ifstream(path_model, std::ios::binary);
   if (!fin) {
-    log("%s: failed to open '%s'\n", __func__, path_model);
+    PARAFORMER_LOG_INFO("%s: failed to open '%s'\n", __func__, path_model);
     return nullptr;
   }
 
@@ -241,6 +699,11 @@ struct paraformer_context *paraformer_init_from_file(const char *path_model) {
   return ctx;
 }
 
+struct paraformer_context *paraformer_init_from_file(const char *path_model) {
+  return paraformer_init_from_file_with_params(
+      path_model, paraformer_context_default_params());
+}
+
 // load the model from a ggml file
 //
 // file format:
@@ -254,7 +717,7 @@ struct paraformer_context *paraformer_init_from_file(const char *path_model) {
 //
 bool paraformer_model_load(struct paraformer_model_loader *loader,
                            paraformer_context &pctx) {
-  log("%s: loading model\n", __func__);
+  PARAFORMER_LOG_INFO("%s: loading model\n", __func__);
 
   const int64_t t_start_ms = ggml_time_ms();
 
@@ -268,7 +731,7 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
     uint32_t magic;
     read_safe(loader, magic);
     if (magic != GGML_FILE_MAGIC) {
-      log("%s: invalid model data (bad magic)\n", __func__);
+      PARAFORMER_LOG_INFO("%s: invalid model data (bad magic)\n", __func__);
       return false;
     }
   }
@@ -303,35 +766,39 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
     // computation
     pctx.wtype = ggml_ftype_to_ggml_type((ggml_ftype)(model.hparams.ftype));
     if (pctx.wtype == GGML_TYPE_COUNT) {
-      log("%s: invalid model (bad ftype value %d)\n", __func__,
-          model.hparams.ftype);
+      PARAFORMER_LOG_INFO("%s: invalid model (bad ftype value %d)\n", __func__,
+                          model.hparams.ftype);
       return false;
     }
 
     const size_t scale = model.hparams.ftype ? 1 : 2;
 
-    log("%s: n_vocab       = %d\n", __func__, hparams.n_vocab);
-    log("%s: n_encoder_hidden_state   = %d\n", __func__,
-        hparams.n_encoder_hidden_state);
-    log("%s: n_encoder_linear_units = %d\n", __func__,
-        hparams.n_encoder_linear_units);
-    log("%s: n_encoder_attention_heads  = %d\n", __func__,
-        hparams.n_encoder_attention_heads);
-    log("%s: n_encoder_layers = %d\n", __func__, hparams.n_encoder_layers);
-    log("%s: n_decoder_hidden_state    = %d\n", __func__,
-        hparams.n_decoder_hidden_state);
-    log("%s: n_decoder_linear_units  = %d\n", __func__,
-        hparams.n_decoder_linear_units);
-    log("%s: n_decoder_attention_heads   = %d\n", __func__,
-        hparams.n_decoder_attention_heads);
-    log("%s: n_decoder_layers  = %d\n", __func__, hparams.n_decoder_layers);
-    log("%s: n_predictor_dim  = %d\n", __func__, hparams.n_predictor_dim);
-    log("%s: predictor_tail_threshold  = %f\n", __func__,
-        hparams.predictor_tail_threshold);
-    log("%s: n_mels        = %d\n", __func__, hparams.n_mels);
-    log("%s: ftype         = %d\n", __func__, model.hparams.ftype);
-    log("%s: qntvr         = %d\n", __func__, qntvr);
-    log("%s: type          = %d\n", __func__, model.type);
+    PARAFORMER_LOG_INFO("%s: n_vocab       = %d\n", __func__, hparams.n_vocab);
+    PARAFORMER_LOG_INFO("%s: n_encoder_hidden_state   = %d\n", __func__,
+                        hparams.n_encoder_hidden_state);
+    PARAFORMER_LOG_INFO("%s: n_encoder_linear_units = %d\n", __func__,
+                        hparams.n_encoder_linear_units);
+    PARAFORMER_LOG_INFO("%s: n_encoder_attention_heads  = %d\n", __func__,
+                        hparams.n_encoder_attention_heads);
+    PARAFORMER_LOG_INFO("%s: n_encoder_layers = %d\n", __func__,
+                        hparams.n_encoder_layers);
+    PARAFORMER_LOG_INFO("%s: n_decoder_hidden_state    = %d\n", __func__,
+                        hparams.n_decoder_hidden_state);
+    PARAFORMER_LOG_INFO("%s: n_decoder_linear_units  = %d\n", __func__,
+                        hparams.n_decoder_linear_units);
+    PARAFORMER_LOG_INFO("%s: n_decoder_attention_heads   = %d\n", __func__,
+                        hparams.n_decoder_attention_heads);
+    PARAFORMER_LOG_INFO("%s: n_decoder_layers  = %d\n", __func__,
+                        hparams.n_decoder_layers);
+    PARAFORMER_LOG_INFO("%s: n_predictor_dim  = %d\n", __func__,
+                        hparams.n_predictor_dim);
+    PARAFORMER_LOG_INFO("%s: predictor_tail_threshold  = %f\n", __func__,
+                        hparams.predictor_tail_threshold);
+    PARAFORMER_LOG_INFO("%s: n_mels        = %d\n", __func__, hparams.n_mels);
+    PARAFORMER_LOG_INFO("%s: ftype         = %d\n", __func__,
+                        model.hparams.ftype);
+    PARAFORMER_LOG_INFO("%s: qntvr         = %d\n", __func__, qntvr);
+    PARAFORMER_LOG_INFO("%s: type          = %d\n", __func__, model.type);
 
     // initialize all memory buffers
     // always have at least one decoder
@@ -349,8 +816,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
     read_safe(loader, n_vocab);
 
     if (n_vocab != model.hparams.n_vocab) {
-      log("%s: invalid model file (bad vocab size %d != %d)\n", __func__,
-          n_vocab, model.hparams.n_vocab);
+      PARAFORMER_LOG_INFO("%s: invalid model file (bad vocab size %d != %d)\n",
+                          __func__, n_vocab, model.hparams.n_vocab);
       return false;
     }
 
@@ -371,7 +838,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
       } else {
         // seems like we have an empty-string token in multi-language
         // models (i = 50256)
-        // log("%s: warning: empty-string token in vocab, i = %d\n",
+        // PARAFORMER_LOG_INFO("%s: warning: empty-string token in vocab, i =
+        // %d\n",
         // __func__, i);
         word = "";
       }
@@ -401,7 +869,7 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
 
     model.ctx = ggml_init(params);
     if (!model.ctx) {
-      log("%s: ggml_init() failed\n", __func__);
+      PARAFORMER_LOG_INFO("%s: ggml_init() failed\n", __func__);
       return false;
     }
   }
@@ -962,19 +1430,22 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
         name.assign(&tmp[0], tmp.size());
 
         if (model.tensors.find(name) == model.tensors.end()) {
-          log("%s: unknown tensor '%s' in model file\n", __func__, name.data());
+          PARAFORMER_LOG_INFO("%s: unknown tensor '%s' in model file\n",
+                              __func__, name.data());
           return false;
         }
 
         auto tensor = model.tensors[name.data()];
         if (tensor == nullptr) {
-          log("%s: tensor '%s' has not init\n", __func__, name.data());
+          PARAFORMER_LOG_INFO("%s: tensor '%s' has not init\n", __func__,
+                              name.data());
           return false;
         }
         if (ggml_nelements(tensor) != nelements) {
-          log("%s: tensor '%s' has wrong size in model file\n", __func__,
-              name.data());
-          log("%s: shape: [%d, %d, %d], expected: [%d, %d, %d]\n", __func__,
+          PARAFORMER_LOG_INFO("%s: tensor '%s' has wrong size in model file\n",
+                              __func__, name.data());
+          PARAFORMER_LOG_INFO(
+              "%s: shape: [%d, %d, %d], expected: [%d, %d, %d]\n", __func__,
               ne[0], ne[1], ne[2], (int)tensor->ne[0], (int)tensor->ne[1],
               (int)tensor->ne[2]);
           return false;
@@ -982,7 +1453,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
 
         if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1] ||
             tensor->ne[2] != ne[2]) {
-          log("%s: tensor '%s' has wrong shape in model file: got "
+          PARAFORMER_LOG_INFO(
+              "%s: tensor '%s' has wrong shape in model file: got "
               "[%d, "
               "%d, %d], expected [%d, %d, %d]\n",
               __func__, name.data(), (int)tensor->ne[0], (int)tensor->ne[1],
@@ -994,7 +1466,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
 
         if ((nelements * bpe) / ggml_blck_size(tensor->type) !=
             ggml_nbytes(tensor)) {
-          log("%s: tensor '%s' has wrong size in model file: got "
+          PARAFORMER_LOG_INFO(
+              "%s: tensor '%s' has wrong size in model file: got "
               "%zu, "
               "expected %zu\n",
               __func__, name.data(), ggml_nbytes(tensor), nelements * bpe);
@@ -1011,16 +1484,18 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
         model.n_loaded++;
       }
 
-      log("%s: model size    = %7.2f MB\n", __func__,
-          total_size / 1024.0 / 1024.0);
+      PARAFORMER_LOG_INFO("%s: model size    = %7.2f MB\n", __func__,
+                          total_size / 1024.0 / 1024.0);
 
       if (model.n_loaded == 0) {
-        log("%s: WARN no tensors loaded from model file - assuming "
+        PARAFORMER_LOG_INFO(
+            "%s: WARN no tensors loaded from model file - assuming "
             "empty "
             "model for testing\n",
             __func__);
       } else if (model.n_loaded != (int)model.tensors.size()) {
-        log("%s: ERROR not all tensors loaded from model file - "
+        PARAFORMER_LOG_INFO(
+            "%s: ERROR not all tensors loaded from model file - "
             "expected "
             "%zu, got %d\n",
             __func__, model.tensors.size(), model.n_loaded);
@@ -1029,8 +1504,8 @@ bool paraformer_model_load(struct paraformer_model_loader *loader,
     }
   }
   pctx.t_load_ms = ggml_time_ms() - t_start_ms;
-  log("%s: load paraformer model takes %f second \n", __func__,
-      pctx.t_load_ms * 1.0 / 1000);
+  PARAFORMER_LOG_INFO("%s: load paraformer model takes %f second \n", __func__,
+                      pctx.t_load_ms * 1.0 / 1000);
   return true;
 }
 
@@ -1111,19 +1586,21 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
 #ifdef USE_COREML
   const auto path_coreml = PARAFORMER_get_coreml_path_encoder(ctx->path_model);
 
-  log("%s: loading Core ML model from '%s'\n", __func__, path_coreml.c_str());
-  log("%s: first run on a device may take a while ...\n", __func__);
+  PARAFORMER_LOG_INFO("%s: loading Core ML model from '%s'\n", __func__,
+                      path_coreml.c_str());
+  PARAFORMER_LOG_INFO("%s: first run on a device may take a while ...\n",
+                      __func__);
 
   state->ctx_coreml = PARAFORMER_coreml_init(path_coreml.c_str());
   if (!state->ctx_coreml) {
-    log("%s: failed to load Core ML model from '%s'\n", __func__,
-        path_coreml.c_str());
+    PARAFORMER_LOG_INFO("%s: failed to load Core ML model from '%s'\n",
+                        __func__, path_coreml.c_str());
 #ifndef COREML_ALLOW_FALLBACK
     delete state;
     return nullptr;
 #endif
   } else {
-    log("%s: Core ML model loaded\n", __func__);
+    PARAFORMER_LOG_INFO("%s: Core ML model loaded\n", __func__);
   }
 #endif
 
@@ -1138,7 +1615,8 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
   //        paraformer_allocr_graph_init(state->alloc_bias_encoder, [&]() {
   //        return paraformer_build_graph_bias(*ctx, *state, 0); });
   //
-  //        log("%s: compute buffer (conv)   = %7.2f MB\n", __func__,
+  //        PARAFORMER_LOG_INFO("%s: compute buffer (conv)   = %7.2f MB\n",
+  //        __func__,
   //            PARAFORMER_allocr_size(state->alloc_bias_encoder) / 1024.0 /
   //            1024.0);
   //    }
@@ -1148,11 +1626,12 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
     state->embd_enc =
         ggml_new_tensor_2d(ctx->model.ctx, GGML_TYPE_F16, 132, 512);
     state->exp_n_audio_ctx = 132;
-    paraformer_allocr_graph_init(state->alloc_encode, [&]() {
+    paraformer_allocr_graph_init(state->alloc_encode, ctx->backend, [&]() {
       return paraformer_build_graph_encoder(*ctx, *state);
     });
 
-    log("%s: compute buffer (encode) = %7.2f MB\n", __func__,
+    PARAFORMER_LOG_INFO(
+        "%s: compute buffer (encode) = %7.2f MB\n", __func__,
         paraformer_allocr_size(state->alloc_encode) / 1024.0 / 1024.0);
   }
 
@@ -1163,25 +1642,27 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
     //                                     paraformer_build_graph_predict(*ctx,
     //                                     *state); });
 
-    log("%s: compute buffer (cross)  = %7.2f MB\n", __func__,
+    PARAFORMER_LOG_INFO(
+        "%s: compute buffer (cross)  = %7.2f MB\n", __func__,
         paraformer_allocr_size(state->alloc_predict) / 1024.0 / 1024.0);
   }
 
   // todo decoder allocator
   {
-    log("%s: compute buffer (decode) = %7.2f MB\n", __func__,
+    PARAFORMER_LOG_INFO(
+        "%s: compute buffer (decode) = %7.2f MB\n", __func__,
         paraformer_allocr_size(state->alloc_decode) / 1024.0 / 1024.0);
   }
 
 #ifdef GGML_USE_METAL
   state->ctx_metal = ggml_metal_init(1);
   if (!state->ctx_metal) {
-    log("%s: ggml_metal_init() failed\n", __func__);
+    PARAFORMER_LOG_INFO("%s: ggml_metal_init() failed\n", __func__);
     delete state;
     return nullptr;
   }
 
-  log("%s: Metal context initialized\n", __func__);
+  PARAFORMER_LOG_INFO("%s: Metal context initialized\n", __func__);
 
   // this allocates all Metal resources and memory buffers
 
@@ -1202,13 +1683,14 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
 
   const size_t max_size = ggml_get_max_tensor_size(ctx->model.ctx);
 
-  log("%s: max tensor size = %8.2f MB\n", __func__, max_size / 1024.0 / 1024.0);
+  PARAFORMER_LOG_INFO("%s: max tensor size = %8.2f MB\n", __func__,
+                      max_size / 1024.0 / 1024.0);
 
-#define PARAFORMER_METAL_CHECK_BUF(result)             \
-  if (!(result)) {                                     \
-    log("%s: failed to add metal buffer\n", __func__); \
-    delete state;                                      \
-    return nullptr;                                    \
+#define PARAFORMER_METAL_CHECK_BUF(result)                             \
+  if (!(result)) {                                                     \
+    PARAFORMER_LOG_INFO("%s: failed to add metal buffer\n", __func__); \
+    delete state;                                                      \
+    return nullptr;                                                    \
   }
 
   PARAFORMER_METAL_CHECK_BUF(ggml_metal_add_buffer(
@@ -1274,17 +1756,11 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx,
   // todo   change the parameter 4096
   ggml_cgraph *gf = ggml_new_graph_custom(ctx0, 4096, false);
 
-  ggml_allocr *alloc = pstate.alloc_encode.alloc;
-
   struct ggml_tensor *cur = ggml_view_tensor(ctx0, pstate.embd_enc);
 
   const auto dim = cur->ne[1];
   struct ggml_tensor *position =
       ggml_new_tensor_2d(ctx0, pctx.wtype, n_ctx, dim);
-  ggml_allocr_alloc(alloc, position);
-  if (!ggml_allocr_is_measure(alloc)) {
-    log("ggml allocr error");
-  }
 
   // SinusoidalPositionEncoder
   // position = concat(sin(10000^(-2i/(dim -2))), cos(10000^(-2i/(dim -2)))
@@ -1366,8 +1842,7 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx,
       // K * Q
       struct ggml_tensor *KQ = ggml_mul_mat(ctx0, K, Q);
 
-      struct ggml_tensor *KQscale = ggml_new_tensor_1d(ctx0, pctx.wtype, 1);
-      ggml_allocr_alloc(alloc, KQscale);
+      float KQscale = 1.0f / sqrtf(float(n_state) / n_head);
 
       struct ggml_tensor *KQ_scaled = ggml_scale(ctx0, KQ, KQscale);
 
@@ -1405,13 +1880,12 @@ static bool paraformer_encode_internal(paraformer_context &ctx,
   {
     auto &alloc = state.alloc_encode.alloc;
 
-    ggml_allocr_reset(alloc);
-
     ggml_cgraph *gf = paraformer_build_graph_encoder(ctx, state);
 
-    ggml_allocr_alloc_graph(alloc, gf);
-
-    //        ggml_graph_compute_helper(state.backend, gf, n_threads);
+    if (!ggml_gallocr_alloc_graph(*alloc, gf)) {
+      // should never happen as we pre-allocate the memory
+      return false;
+    }
   }
 }
 
