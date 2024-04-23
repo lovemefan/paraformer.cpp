@@ -2468,7 +2468,7 @@ SeacoParaformer(
 | predictor.cif_conv1d.weight                          | n_dims = 3 | torch.float32 | float32      | 786432     |
 | predictor.cif_conv1d.bias                            | n_dims = 1 | torch.float32 | float32      | 512        |
 | predictor.cif_output.weight                          | n_dims = 1 | torch.float32 | float32      | 512        |
-| predictor.cif_output.bias                            | n_dims = 0 | torch.float32 | float32      | 1          |
+| predictor.cif_output.bias                            | n_dims = 1 | torch.float32 | float32      | 1          |
 | bias_encoder.weight_ih_l0                            | n_dims = 2 | torch.float32 | float32      | 1048576    |
 | bias_encoder.weight_hh_l0                            | n_dims = 2 | torch.float32 | float32      | 1048576    |
 | bias_encoder.bias_ih_l0                              | n_dims = 1 | torch.float32 | float32      | 2048       |
@@ -2607,4 +2607,4 @@ SeacoParaformer(
 | predictor.blstm.bias_ih_l0_reverse                   | n_dims = 1 | torch.float32 | float32      | 2048       |
 | predictor.blstm.bias_hh_l0_reverse                   | n_dims = 1 | torch.float32 | float32      | 2048       |
 | predictor.cif_output2.weight                         | n_dims = 1 | torch.float32 | float32      | 1024       |
-| predictor.cif_output2.bias                           | n_dims = 0 | torch.float32 | float32      | 1          |
+| predictor.cif_output2.bias                           | n_dims = 1 | torch.float32 | float32      | 1          |
