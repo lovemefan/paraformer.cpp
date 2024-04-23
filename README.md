@@ -29,9 +29,11 @@ mkdir build && cd build
 cmake ../src/csrc && make -j 8
 
 # download model weight from modelscope
-git clone https://www.modelscope.cn/damo/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404.git resource/model
-# convert weight and vocab into ggml format
-python src/python/convert-pt-to-ggml.py -i resource/model/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404 -o resource/model --fp16
+git clone https://www.modelscope.cn/damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch.git resource/model
+# convert weight and vocab into gguf format
+python src/python/convert-pt-to-gguf.py \
+  --model /Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch \
+  --outfile /Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/seaco-paraformer-ggml-model-fp16.bin
 ```
 
 ## Acknowledge
