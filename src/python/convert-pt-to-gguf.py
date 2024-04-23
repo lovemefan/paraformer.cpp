@@ -189,7 +189,7 @@ class SeacoParaformerModel(Model):
         with open(self.dir_model / "tokens.json", "r", encoding="utf-8") as f:
             tokens = json.load(f)
 
-        self.gguf_writer.add_uint32(f"tokenizer.vocab_size", len(tokens))
+        self.gguf_writer.add_int32(f"tokenizer.vocab_size", len(tokens))
 
         # equals self.gguf_writer.add_array("tokenizer.tokens", tokens)
         self.gguf_writer.add_token_list(tokens)
@@ -197,96 +197,96 @@ class SeacoParaformerModel(Model):
         self.gguf_writer.add_string("tokenizer.unk_symbol", "<unk>")
 
     def set_gguf_parameters(self):
-        # equals  self.gguf_writer.add_string("general.architecture", self.model_name)
-        self.gguf_writer.add_architecture()
 
         # frontend config:
-        self.gguf_writer.add_uint32("frontend.sample_rate", self.find_hparam('frontend_conf.fs'))
+        self.gguf_writer.add_int32("frontend.sample_rate", self.find_hparam('frontend_conf.fs'))
         self.gguf_writer.add_string("frontend.window", self.find_hparam('frontend_conf.window'))
-        self.gguf_writer.add_uint32("frontend.num_mels", self.find_hparam('frontend_conf.n_mels'))
-        self.gguf_writer.add_uint32("frontend.frame_length", self.find_hparam('frontend_conf.frame_length'))
-        self.gguf_writer.add_uint32("frontend.frame_shift", self.find_hparam('frontend_conf.frame_shift'))
-        self.gguf_writer.add_uint32("frontend.lfr_m", self.find_hparam('frontend_conf.lfr_m'))
-        self.gguf_writer.add_uint32("frontend.lfr_n", self.find_hparam('frontend_conf.lfr_n'))
+        self.gguf_writer.add_int32("frontend.num_mels", self.find_hparam('frontend_conf.n_mels'))
+        self.gguf_writer.add_int32("frontend.frame_length", self.find_hparam('frontend_conf.frame_length'))
+        self.gguf_writer.add_int32("frontend.frame_shift", self.find_hparam('frontend_conf.frame_shift'))
+        self.gguf_writer.add_int32("frontend.lfr_m", self.find_hparam('frontend_conf.lfr_m'))
+        self.gguf_writer.add_int32("frontend.lfr_n", self.find_hparam('frontend_conf.lfr_n'))
         self.gguf_writer.add_float32("frontend.dither", self.find_hparam('frontend_conf.dither'))
 
         # model config
+        self.gguf_writer.add_int32("model.inner_dim",
+                                   self.find_hparam('model_conf.inner_dim'))
         # encoder
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.attention_heads",
-                                    self.find_hparam('encoder_conf.attention_heads'))
+        self.gguf_writer.add_int32("encoder.attention_heads",
+                                   self.find_hparam('encoder_conf.attention_heads'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.num_blocks",
-                                    self.find_hparam('encoder_conf.num_blocks'))
+        self.gguf_writer.add_int32("encoder.num_blocks",
+                                   self.find_hparam('encoder_conf.num_blocks'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.linear_units",
-                                    self.find_hparam('encoder_conf.linear_units'))
+        self.gguf_writer.add_int32("encoder.linear_units",
+                                   self.find_hparam('encoder_conf.linear_units'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.output_size",
-                                    self.find_hparam('encoder_conf.output_size'))
+        self.gguf_writer.add_int32("encoder.output_size",
+                                   self.find_hparam('encoder_conf.output_size'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.kernel_size",
-                                    self.find_hparam('encoder_conf.kernel_size'))
+        self.gguf_writer.add_int32("encoder.kernel_size",
+                                   self.find_hparam('encoder_conf.kernel_size'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.encoder.sanm_shfit",
-                                    self.find_hparam('encoder_conf.sanm_shfit'))
+        self.gguf_writer.add_int32(f"encoder.sanm_shfit",
+                                   self.find_hparam('encoder_conf.sanm_shfit'))
 
         # decoder
-        self.gguf_writer.add_uint32(f"{self.model_name}.decoder.attention_heads",
-                                    self.find_hparam('decoder_conf.attention_heads'))
+        self.gguf_writer.add_int32("decoder.attention_heads",
+                                   self.find_hparam('decoder_conf.attention_heads'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.decoder.linear_units",
-                                    self.find_hparam('decoder_conf.linear_units'))
+        self.gguf_writer.add_int32("decoder.linear_units",
+                                   self.find_hparam('decoder_conf.linear_units'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.decoder.num_blocks",
-                                    self.find_hparam('decoder_conf.num_blocks'))
+        self.gguf_writer.add_int32("decoder.num_blocks",
+                                   self.find_hparam('decoder_conf.num_blocks'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.decoder.att_layer_num",
-                                    self.find_hparam('decoder_conf.att_layer_num'))
+        self.gguf_writer.add_int32("decoder.att_layer_num",
+                                   self.find_hparam('decoder_conf.att_layer_num'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.decoder.kernel_size",
-                                    self.find_hparam('decoder_conf.kernel_size'))
+        self.gguf_writer.add_int32("decoder.kernel_size",
+                                   self.find_hparam('decoder_conf.kernel_size'))
 
         # seaco decoder
-        self.gguf_writer.add_uint32(f"{self.model_name}.seaco_decoder.attention_heads",
-                                    self.find_hparam('seaco_decoder_conf.attention_heads'))
+        self.gguf_writer.add_int32("seaco_decoder.attention_heads",
+                                   self.find_hparam('seaco_decoder_conf.attention_heads'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.seaco_decoder.linear_units",
-                                    self.find_hparam('seaco_decoder_conf.linear_units'))
+        self.gguf_writer.add_int32("seaco_decoder.linear_units",
+                                   self.find_hparam('seaco_decoder_conf.linear_units'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.seaco_decoder.num_blocks",
-                                    self.find_hparam('seaco_decoder_conf.num_blocks'))
+        self.gguf_writer.add_int32("seaco_decoder.num_blocks",
+                                   self.find_hparam('seaco_decoder_conf.num_blocks'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.seaco_decoder.kernel_size",
-                                    self.find_hparam('seaco_decoder_conf.kernel_size'))
+        self.gguf_writer.add_int32("seaco_decoder.kernel_size",
+                                   self.find_hparam('seaco_decoder_conf.kernel_size'))
 
         # predictor
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.predictor.idim",
-                                    self.find_hparam('predictor_conf.idim'))
+        self.gguf_writer.add_int32("predictor.idim",
+                                   self.find_hparam('predictor_conf.idim'))
 
-        self.gguf_writer.add_float32(f"{self.model_name}.predictor.threshold",
+        self.gguf_writer.add_float32("predictor.threshold",
                                      self.find_hparam('predictor_conf.threshold'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.predictor.l_order",
-                                    self.find_hparam('predictor_conf.l_order'))
+        self.gguf_writer.add_int32("predictor.l_order",
+                                   self.find_hparam('predictor_conf.l_order'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.predictor.r_order",
-                                    self.find_hparam('predictor_conf.r_order'))
+        self.gguf_writer.add_int32("predictor.r_order",
+                                   self.find_hparam('predictor_conf.r_order'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.predictor.r_order",
-                                    self.find_hparam('predictor_conf.r_order'))
+        self.gguf_writer.add_int32("predictor.r_order",
+                                   self.find_hparam('predictor_conf.r_order'))
 
-        self.gguf_writer.add_float32(f"{self.model_name}.predictor.tail_threshold",
+        self.gguf_writer.add_float32("predictor.tail_threshold",
                                      self.find_hparam('predictor_conf.tail_threshold'))
 
-        self.gguf_writer.add_float32(f"{self.model_name}.predictor.smooth_factor2",
+        self.gguf_writer.add_float32("predictor.smooth_factor2",
                                      self.find_hparam('predictor_conf.smooth_factor2'))
 
-        self.gguf_writer.add_float32(f"{self.model_name}.predictor.noise_threshold2",
+        self.gguf_writer.add_float32("predictor.noise_threshold2",
                                      self.find_hparam('predictor_conf.noise_threshold2'))
 
-        self.gguf_writer.add_uint32(f"{self.model_name}.predictor.upsample_times",
-                                    self.find_hparam('predictor_conf.upsample_times'))
+        self.gguf_writer.add_int32("predictor.upsample_times",
+                                   self.find_hparam('predictor_conf.upsample_times'))
 
     def write_tensors(self):
         for name, data_torch in self.get_tensors():
@@ -300,7 +300,12 @@ class SeacoParaformerModel(Model):
             if data_torch.dtype not in (torch.float16, torch.float32):
                 data_torch = data_torch.to(torch.float32)
 
-            data = data_torch.squeeze().numpy()
+            _data = data_torch.squeeze().numpy()
+            # use max to avoid n_dim of single tensor become 0
+            if len(_data.shape) != 0:
+                data = _data
+            else:
+                data = data_torch.numpy()
 
             n_dims = len(data.shape)
             data_dtype = data.dtype
@@ -324,7 +329,7 @@ class SeacoParaformerModel(Model):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert model to a GGML compatible file"
+        description="Convert model to a GGUF compatible file"
     )
     parser.add_argument(
         "--vocab-only",
