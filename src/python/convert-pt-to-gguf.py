@@ -289,6 +289,8 @@ class SeacoParaformerModel(Model):
                                    self.find_hparam('predictor_conf.upsample_times'))
 
     def write_tensors(self):
+
+        tensor_size = 0
         for name, data_torch in self.get_tensors():
             # we don't need these
             if name.endswith(("Loss", "loss")):
@@ -323,8 +325,9 @@ class SeacoParaformerModel(Model):
                 data = data.astype(np.float16)
 
             print(f"|{name}| n_dims = {n_dims}| {old_dtype} | {data.dtype} | {data.size}|")
-
+            tensor_size += data.size
             self.gguf_writer.add_tensor(name, data)
+        print(f"total size is {tensor_size}")
 
 
 def parse_args() -> argparse.Namespace:
