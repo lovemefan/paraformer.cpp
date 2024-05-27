@@ -1502,13 +1502,6 @@ SeacoParaformer(
 )
 ```
 
-## 总结
-
-与前一代contextual热词模型的区别：
-
-1. decoder 由原来的14层变为现有的15层
-2. 将原有的contextual_decoder由原来的1层加深到6层，并添加decoder3
-
 ## 参数
 
 | key                                                  | n dims     | pre type      | convert type | param size |
@@ -2608,3 +2601,10 @@ SeacoParaformer(
 | predictor.blstm.bias_hh_l0_reverse                   | n_dims = 1 | torch.float32 | float32      | 2048       |
 | predictor.cif_output2.weight                         | n_dims = 1 | torch.float32 | float32      | 1024       |
 | predictor.cif_output2.bias                           | n_dims = 1 | torch.float32 | float32      | 1          |
+
+## 总结
+
+与前一代contextual热词模型的区别：
+
+1. decoder 由原来的14层变为现有的15层
+2. 将原有的contextual_decoder替换为ParaformerSANMDecoder，区别在于DecoderLayerSANM从1层加深到6层

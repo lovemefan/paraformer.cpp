@@ -105,6 +105,7 @@ window[0] -= PREEMPH_COEFF * window[0];
 $$
 w(n) = 0.54 - 0.46 * cos (\frac{2\pi n}{N - 1})
 $$
+
 这里 0 < n <= N-1， N是窗的宽度。
 
 ```c++
