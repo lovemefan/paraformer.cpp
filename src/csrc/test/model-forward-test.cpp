@@ -40,25 +40,24 @@ int main() {
       /*.use_gpu              =*/false,
       /*.gpu_device           =*/0,
   };
-  struct paraformer_context *ctx = paraformer_init_from_file_with_params(
-      "/path/to/ggml-base.en.bin", cparams);
-
   struct paraformer_context *context =
-      paraformer_init_from_file(path_model.c_str());
+      paraformer_init_from_file_with_params(path_model.c_str(), cparams);
 
+  if (context == nullptr) {
+    fprintf(stderr, "error: failed to initialize paraformer context\n");
+    return 3;
+  }
   std::string wav_file =
       "/Users/cenglingfan/Code/cpp-project/paraformer.cpp/resource/model/"
       "test.wav";
 
   load_feature_from_wav_file(wav_file, context->state->feature);
 
-  if (context == nullptr) {
-    fprintf(stderr, "error: failed to initialize whisper context\n");
-    return 3;
-  }
   {
-    //    paraformer_full_with_state(context, context->state, hparams,
-    //                               context->state->feature, 4);
+    paraformer_full_params params =
+        paraformer_full_default_params(PARAFORMER_SAMPLING_GREEDY);
+    paraformer_full_with_state(context, context->state, params,
+                               context->state->feature, 4);
   }
 
   //    ggml_cgraph *gf = paraformer_build_graph_encoder(*context,

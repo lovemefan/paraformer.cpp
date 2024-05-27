@@ -140,8 +140,7 @@ struct paraformer_model_loader {
   void (*close)(void *ctx);
 };
 
-bool paraformer_model_load(struct paraformer_model_loader *loader,
-                           paraformer_context &wctx);
+bool paraformer_model_load(const char *path_model, paraformer_context &wctx);
 
 // Various functions for loading a ggml paraformer model.
 // Allocate (almost) all memory needed for the model.
@@ -156,7 +155,7 @@ PARAFORMER_API struct paraformer_context *paraformer_init_from_file(
 PARAFORMER_API struct paraformer_context *paraformer_init_from_buffer(
     void *buffer, size_t buffer_size);
 PARAFORMER_API struct paraformer_context *paraformer_init(
-    struct paraformer_model_loader *loader);
+    struct gguf_context *loader);
 PARAFORMER_API struct paraformer_state *paraformer_init_state(
     paraformer_context *ctx);
 PARAFORMER_API struct ggml_cgraph *paraformer_build_graph_bias_encoder(
