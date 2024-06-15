@@ -106,7 +106,7 @@ static void byteswap_tensor(ggml_tensor *tensor) {
 #else
 #define PARAFORMER_ATTRIBUTE_FORMAT(...)
 #endif
-
+#define PARAFORMER_MAX_NODES 4096
 //
 // logging
 //
@@ -248,7 +248,7 @@ struct paraformer_hparams {
   int ftype = 1;
   float eps = 1e-5f;
   e_model model_type = e_model::MODEL_SEACO_OFFLINE;
-  int n_audio_ctx;
+  int n_audio_ctx = 1600;
 };
 
 // ############ model structure #############
@@ -1496,20 +1496,7 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
   }
 #endif
 
-  //    state->logits.reserve(ctx->vocab.n_vocab *
-  //    ctx->model.hparams.n_text_ctx);
-
   state->logits_id.reserve(ctx->model.hparams.n_vocab);
-
-  //  {
-  //      paraformer_allocr_graph_init(state->alloc_bias_encoder, [&]() {
-  //      return paraformer_build_graph_bias(*ctx, *state, 0); });
-  //
-  //      PARAFORMER_LOG_INFO("%s: compute buffer (conv)   = %7.2f MB\n",
-  //      __func__,
-  //          PARAFORMER_allocr_size(state->alloc_bias_encoder) / 1024.0 /
-  //          1024.0);
-  //  }
 
   // encoder allocator
   {
@@ -1645,13 +1632,13 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx,
 
   struct ggml_context *ctx0 = ggml_init(params);
 
-  ggml_cgraph *gf = ggml_new_graph(ctx0);
+  ggml_cgraph *gf = ggml_new_graph_custom(ctx0, PARAFORMER_MAX_NODES, false);
 
   struct ggml_tensor *fbank = ggml_new_tensor_2d(
-      ctx0, GGML_TYPE_F32, 2 * n_ctx, hparams.n_mels * hparams.lfr_m);
+      ctx0, GGML_TYPE_F32, n_ctx, hparams.n_mels * hparams.lfr_m);
 
   struct ggml_tensor *position = ggml_new_tensor_2d(
-      ctx0, GGML_TYPE_F32, 2 * n_ctx, hparams.n_mels * hparams.lfr_m);
+      ctx0, GGML_TYPE_F32, n_ctx, hparams.n_mels * hparams.lfr_m);
 
   ggml_set_name(fbank, "fbank");
   ggml_set_input(fbank);
@@ -1664,47 +1651,91 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx,
 
   static int iter = 0;
 
-  // norm before attention
-  struct ggml_tensor *inpL = cur;
-
+  cur = ggml_transpose(ctx0, cur);
+  struct ggml_tensor *residual = nullptr;
   for (auto layer : model.encoder.encoder_layer) {
-    cur = ggml_norm(ctx0, inpL, hparams.eps);
+    if (layer.e_norm_w1->ne[0] == layer.e_norm_w2->ne[0]) {
+      residual = ggml_cpy(
+          ctx0, cur,
+          ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]));
+    }
 
-    // layer norm
-    // cur = ln_0_w*cur + ln_0_b
-    cur = ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_norm_w1), layer.e_norm_b1);
+    {
+      // layer norm
+      // cur = ln_0_w*cur + ln_0_b
+      cur = ggml_norm(ctx0, cur, hparams.eps);
+      cur =
+          ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_norm_w1), layer.e_norm_b1);
+    }
 
     // self attention
     {
       // self attention linear qkv
-      cur = ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_attn_ln_qkv_w),
+      cur = ggml_add(ctx0, ggml_mul_mat(ctx0, layer.e_attn_ln_qkv_w, cur),
                      layer.e_attn_ln_qkv_b);
-
+      // cur [1536, 1600]
+      //      cur = ggml_transpose(ctx0, cur);
       // split qkv into separate tensors
+      // q, k, v = torch.split(q_k_v, int(self.h * self.d_k), dim=-1)
       //  ref:
       //  https://github.com/alibaba-damo-academy/FunASR/blob/main/funasr/modules/attention.py#L391-L396
       struct ggml_tensor *Q;
       struct ggml_tensor *K;
       struct ggml_tensor *V;
+      struct ggml_tensor *V_h;
+      struct ggml_tensor *fsmn_memory;
 
-      Q = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 0 * cur->nb[2]);
+      Q = ggml_cpy(ctx0,
+                   ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1],
+                                0 * n_state * cur->nb[0]),
+                   ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx));
       Q = ggml_reshape_4d(ctx0, Q, n_state / n_head, n_head, n_ctx, 1);
       Q = ggml_cont(ctx0, ggml_permute(ctx0, Q, 0, 2, 1, 3));
-      Q = ggml_reshape_3d(ctx0, Q, n_state, n_ctx, n_head);
+      //      Q = ggml_reshape_3d(ctx0, Q, n_state / n_head, n_ctx, n_head);
 
-      K = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 1 * cur->nb[2]);
+      K = ggml_cpy(ctx0,
+                   ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1],
+                                1 * n_state * cur->nb[0]),
+                   ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx));
+
       K = ggml_reshape_4d(ctx0, K, n_state / n_head, n_head, n_ctx, 1);
       K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
-      K = ggml_reshape_3d(ctx0, K, n_state, n_ctx, n_head);
+      //      K = ggml_reshape_3d(ctx0, K, n_state, n_ctx, n_head);
 
-      V = ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1], 2 * cur->nb[2]);
-      V = ggml_reshape_4d(ctx0, V, n_state / n_head, n_head, n_ctx, 1);
-      V = ggml_cont(ctx0, ggml_permute(ctx0, V, 1, 2, 0, 3));  // transposed
-      V = ggml_reshape_3d(ctx0, V, n_state, n_ctx, n_head);
+      V = ggml_cpy(ctx0,
+                   ggml_view_2d(ctx0, cur, n_state, n_ctx, cur->nb[1],
+                                2 * n_state * cur->nb[0]),
+                   ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx));
+      V_h = ggml_reshape_4d(ctx0, V, n_state / n_head, n_head, n_ctx, 1);
+      V_h = ggml_cont(ctx0, ggml_permute(ctx0, V_h, 0, 2, 1, 3));  // transposed
+      //      V = ggml_reshape_3d(ctx0, V, n_state, n_ctx, n_head);
 
       // fsmn forward with V
-      // todo transpose(1,2)
-      V = ggml_conv_1d_ph(ctx0, V, layer.e_attn_fsmn_w, 1, 1);
+      int left_padding = (hparams.fsmn_kernel_size - 1) / 2;
+      int right_padding = hparams.fsmn_kernel_size - 1 - left_padding;
+
+      // todo conv depth wise 1d with group implement
+      {
+        int s0 = 1, s1 = 1, p0 = 0, p1 = 5, d0 = 1, d1 = 1;
+        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
+        ggml_conv_1d(ctx0, layer.e_attn_fsmn_w, V, 1, 5, 1);
+        struct ggml_tensor *im2col = ggml_im2col(
+            ctx0, layer.e_attn_fsmn_w, V, s0, s1, p0, p1, d0, d1, false,
+            GGML_TYPE_F16);  // [N * IC, OH, OW, KH * KW]
+        struct ggml_tensor *new_b =
+            ggml_reshape_4d(ctx0, im2col, im2col->ne[0],
+                            im2col->ne[2] * im2col->ne[1], V->ne[2], V->ne[3]);
+
+        struct ggml_tensor *new_a = ggml_reshape_4d(
+            ctx0, layer.e_attn_fsmn_w,
+            (layer.e_attn_fsmn_w->ne[0] * layer.e_attn_fsmn_w->ne[1]),
+            layer.e_attn_fsmn_w->ne[2], layer.e_attn_fsmn_w->ne[3],
+            1);  // [OC，1, KH, KW] => [1, OC, 1, KH * KW]
+        struct ggml_tensor *result = ggml_mul_mat(ctx0, new_a, new_b);
+        fsmn_memory =
+            ggml_reshape_4d(ctx0, result, im2col->ne[1], im2col->ne[2],
+                            V->ne[2], V->ne[3]);  // [N, OC, OH, OW]
+      }
 
 #ifdef USE_FLASH_ATTN
 
@@ -1720,17 +1751,48 @@ struct ggml_cgraph *paraformer_build_graph_encoder(paraformer_context &pctx,
 
       struct ggml_tensor *KQ_soft_max = ggml_soft_max(ctx0, KQ_scaled);
 
-      struct ggml_tensor *KQV = ggml_mul_mat(ctx0, V, KQ_soft_max);
+      struct ggml_tensor *KQV = ggml_mul_mat(
+          ctx0, ggml_cont(ctx0, ggml_transpose(ctx0, V_h)), KQ_soft_max);
 #endif
       struct ggml_tensor *KQV_merged = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
       cur = ggml_cpy(ctx0, KQV_merged,
                      ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx));
+
+      cur = ggml_add(ctx0, ggml_mul_mat(ctx0, layer.e_attn_ln_out_w, cur),
+                     layer.e_attn_ln_out_b);
+
+      // todo open when conv depth wise 1d with group implement finished
+      // cur = ggml_add(ctx0, cur, fsmn_memory);
+
+      if (layer.e_norm_w1->ne[0] == layer.e_norm_w2->ne[0]) {
+        cur = ggml_add(ctx0, cur, residual);
+      }
     }
-    // norm after attention
+
+    residual = ggml_cpy(
+        ctx0, cur,
+        ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]));
+    {
+      // layer norm after attention
+      // cur = ln_0_w*cur + ln_0_b
+      cur = ggml_norm(ctx0, cur, hparams.eps);
+      cur =
+          ggml_add(ctx0, ggml_mul(ctx0, cur, layer.e_norm_w2), layer.e_norm_b2);
+    }
+
+    {
+      // position-wise feed forward layer
+      cur = ggml_add(ctx0, ggml_mul_mat(ctx0, layer.e_mlp_w1, cur),
+                     layer.e_mlp_b1);
+      cur = ggml_relu(ctx0, cur);
+      cur = ggml_add(ctx0, ggml_mul_mat(ctx0, layer.e_mlp_w2, cur),
+                     layer.e_mlp_b2);
+    }
+    // residual after position wise feed forward
+    cur = ggml_add(ctx0, cur, residual);
   }
 
   ggml_build_forward_expand(gf, cur);
-
   ggml_free(ctx0);
 
   return gf;
@@ -1759,6 +1821,8 @@ static bool paraformer_encode_internal(paraformer_context &ctx,
       // should never happen as we pre-allocate the memory
       return false;
     }
+
+    struct ggml_tensor *mel = ggml_graph_get_tensor(gf, "fbank");
   }
 }
 
