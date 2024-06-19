@@ -4,6 +4,8 @@
 
 #include "paraformer-offline.h"
 
+#include <math.h>
+
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #ifdef GGML_USE_CUDA
@@ -1510,7 +1512,7 @@ struct paraformer_state *paraformer_init_state(paraformer_context *ctx) {
       return nullptr;
     }
 
-    PARAFORMER_LOG_INFO("%s: compute buffer (conv)   = %7.2f MB\n", __func__,
+    PARAFORMER_LOG_INFO("%s: compute buffer (all)   = %7.2f MB\n", __func__,
                         paraformer_allocr_size(state->alloc_encode) / 1e6);
   }
 
@@ -1822,8 +1824,49 @@ static bool paraformer_encode_internal(paraformer_context &ctx,
       return false;
     }
 
-    struct ggml_tensor *mel = ggml_graph_get_tensor(gf, "fbank");
+    struct ggml_tensor *fbank = ggml_graph_get_tensor(gf, "fbank");
+    struct ggml_tensor *position_embedding =
+        ggml_graph_get_tensor(gf, "position");
+
+    // set input
+    {
+      auto feature = state.feature;
+      const int n_ctx = state.feature.n_len;
+
+      assert(fbank->type == GGML_TYPE_F32);
+      assert(feature.n_mel == ctx.model.hparams.n_mels);
+
+      fbank->ne[0] = feature.n_len;
+      position_embedding->ne[0] = feature.n_len;
+
+      std::vector<float> input(feature.data.begin(), feature.data.end());
+      ggml_backend_tensor_set(fbank, input.data(), 0,
+                              ggml_nelements(fbank) * sizeof(float));
+    }
+    // construct position embedding
+    {
+      auto n_len = fbank->ne[0];
+      auto dim = fbank->ne[1];
+      std::vector<float> position;
+      position.resize(n_len * dim);
+
+      // sinusoidal position embedding
+      // P_{k,i} = sin(k/10000^(2i/d))  0 < i < d/2
+      // p_{k,j} = cos(k/10000^(2i/d))  d/2 < j < d
+
+      for (int k = 1; k <= n_len; k++) {
+        for (int i = 0; i < dim / 2; i++) {
+          position[(k - 1) * dim + i] = sinf(k * pow(10000, -2.0 * i / dim));
+          position[(k - 1) * dim + i + dim / 2] =
+              cosf(k * pow(10000, -2.0 * i / dim));
+        }
+      }
+      ggml_backend_tensor_set(
+          position_embedding, position.data(), 0,
+          ggml_nelements(position_embedding) * sizeof(float));
+    }
   }
+  return true;
 }
 
 int paraformer_full_with_state(struct paraformer_context *ctx,
