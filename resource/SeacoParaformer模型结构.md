@@ -2607,4 +2607,5 @@ SeacoParaformer(
 与前一代contextual热词模型的区别：
 
 1. decoder 由原来的14层变为现有的15层
-2. 将原有的contextual_decoder替换为ParaformerSANMDecoder，区别在于DecoderLayerSANM从1层加深到6层
+2. bias encoder由原来的一层LSTM变成2层LSTM， 删掉了LSTM的embedding
+3. 将原有的contextual_decoder替换为ParaformerSANMDecoder，区别在于DecoderLayerSANM从1层加深到6层
